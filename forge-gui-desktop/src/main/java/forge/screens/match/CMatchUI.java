@@ -900,6 +900,10 @@ public final class CMatchUI
             btn2.setEnabled(actualEnable2);
             btn1.setFocusable(actualEnable1 && actualFocus1);
             btn2.setFocusable(actualEnable2 && !actualFocus1);
+            // notify before requesting focus below, which could make a Forge window look active
+            if (!macroReplaying && (actualEnable1 || actualEnable2)) {
+                WaitingNotifier.notifyWaiting(lastPromptMessage);
+            }
             // ensure we don't steal focus from an overlay
             if (toFocus != null && !FNetOverlay.SINGLETON_INSTANCE.getTxtInput().hasFocus() ) {
                 toFocus.requestFocus(); // focus here even if another window has focus - shouldn't have to do it this way but some popups grab window focus

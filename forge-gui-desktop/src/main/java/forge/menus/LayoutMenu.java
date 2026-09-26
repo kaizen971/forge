@@ -88,6 +88,7 @@ public final class LayoutMenu {
         }
         menu.add(getMenuItem_ShowTabs());
         menu.add(getMenuItem_NewCardCountInTab());
+        menu.add(getMenuItem_NotifyWhenWaiting());
 
         if (isMatch) {
             menu.addSeparator();
@@ -463,6 +464,19 @@ public final class LayoutMenu {
             FloatingZone.refreshAll();
             refreshHandCards();
             refreshFieldTabLabels();
+        });
+        return menuItem;
+    }
+
+    private static JCheckBoxMenuItem getMenuItem_NotifyWhenWaiting() {
+        final JCheckBoxMenuItem menuItem = MenuUtil.createStayOpenCheckBox(
+                localizer.getMessageorUseDefault("lblNotifyWhenWaiting", "Notify me when Forge is waiting for me"));
+        menuItem.setToolTipText(localizer.getMessageorUseDefault("lblNotifyWhenWaitingTooltip",
+                "Flash the taskbar and show a system notification when an action is required while Forge is in the background."));
+        menuItem.setState(prefs.getPrefBoolean(FPref.UI_NOTIFY_WHEN_WAITING));
+        menuItem.addActionListener(e -> {
+            prefs.setPref(FPref.UI_NOTIFY_WHEN_WAITING, menuItem.getState());
+            prefs.save();
         });
         return menuItem;
     }
