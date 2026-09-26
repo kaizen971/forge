@@ -1,6 +1,10 @@
 package forge.gui.framework;
 
 import java.awt.Container;
+import java.awt.IllegalComponentStateException;
+import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.Window;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
@@ -10,6 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import javax.swing.JPanel;
+import javax.swing.JWindow;
+import javax.swing.SwingUtilities;
 
 import forge.gui.MouseUtil;
 import forge.localinstance.skin.FSkinProp;
@@ -32,8 +38,16 @@ public final class SRearrangingUtil {
         NONE,
         TOP,
         BOTTOM,
-        LEFT
+        LEFT,
+        /** Dropped outside every Forge window: detach into a new window. */
+        NEW_WINDOW
     }
+
+    // State of drags from, to or between detached windows
+    private static boolean crossWindow = false;
+    private static DragCell crossTarget = null;
+    private static Dropzone crossZone = Dropzone.NONE;
+    private static Rectangle crossBounds = null;
 
     private static int evtX;
     private static int evtY;
@@ -86,20 +100,9 @@ public final class SRearrangingUtil {
     private static void startRearrange(final MouseEvent e) {
         cellSrc = (DragCell) ((Container) e.getSource()).getParent().getParent();
         docsToMove.clear();
-        if (cellSrc.isFloating()) { //floating windows are not part of the drag layout: only select the clicked tab
-            if (e.getSource() instanceof DragTab) {
-                for (final IVDoc<? extends ICDoc> vDoc : cellSrc.getDocs()) {
-                    if (vDoc.getTabLabel() == e.getSource()) {
-                        cellSrc.setSelected(vDoc);
-                        cellSrc.refresh();
-                        SLayoutIO.saveLayout(null);
-                    }
-                }
-            }
-            cellSrc = null;
-            return;
-        }
         dropzone = Dropzone.NONE;
+        crossWindow = false;
+        crossTarget = null;
 
         // Save selected tab in case this tab will be dragged.
         srcSelectedDoc = cellSrc.getSelected();
@@ -138,6 +141,17 @@ public final class SRearrangingUtil {
         final int nestingMargin = 30;
         evtX = (int) e.getLocationOnScreen().getX();
         evtY = (int) e.getLocationOnScreen().getY();
+
+        // Drags from, to or between detached windows use their own preview (see crossWindowRearrange)
+        final Point screenPoint = e.getLocationOnScreen();
+        if (cellSrc.isFloating() || SFloatingDocs.isOverFloatingWindow(screenPoint) || !isOverMainContent(screenPoint)) {
+            crossWindowRearrange(screenPoint);
+            return;
+        }
+        if (crossWindow) { //back over the main window
+            crossWindow = false;
+            hideCrossPreview();
+        }
 
         // Find out over which panel the event occurred.
         for (final DragCell t : FView.SINGLETON_INSTANCE.getDragCells()) {
@@ -235,6 +249,13 @@ public final class SRearrangingUtil {
         MouseUtil.resetCursor();
         pnlPreview.setVisible(false);
         pnlPreview.setBounds(0, 0, 0, 0);
+        hideCrossPreview();
+
+        if (crossWindow) {
+            crossWindow = false;
+            endCrossWindowRearrange();
+            return;
+        }
 
         // Source and target are the same?
         if (dropzone.equals(Dropzone.NONE) || (cellTarget.equals(cellSrc) && cellSrc.getDocs().size() == 1))
@@ -247,57 +268,8 @@ public final class SRearrangingUtil {
             return;
         }
 
-        // Prep vals for possible resize
-        tempX = cellTarget.getX();
-        tempY = cellTarget.getY();
-        tempW = cellTarget.getW();
-        tempH = cellTarget.getH();
-        cellNew = new DragCell();
-
         // Insert a new cell if necessary, change bounds on target as appropriate.
-        switch (dropzone) {
-            case LEFT:
-                cellNew.setBounds(
-                    tempX, tempY,
-                    tempW / 2, tempH);
-                cellTarget.setBounds(
-                    tempX + cellNew.getW(), tempY,
-                    tempW - cellNew.getW(), tempH);
-                FView.SINGLETON_INSTANCE.addDragCell(cellNew);
-                break;
-            case RIGHT:
-                cellTarget.setBounds(
-                    tempX, tempY,
-                    tempW / 2, tempH);
-                cellNew.setBounds(
-                    cellTarget.getX() + cellTarget.getW(), tempY ,
-                    tempW - cellTarget.getW(), tempH);
-                FView.SINGLETON_INSTANCE.addDragCell(cellNew);
-                break;
-            case TOP:
-                cellNew.setBounds(
-                    tempX, tempY,
-                    tempW, tempH - (tempH / 2));
-                cellTarget.setBounds(
-                    tempX, tempY + cellNew.getH(),
-                    tempW, tempH - cellNew.getH());
-                FView.SINGLETON_INSTANCE.addDragCell(cellNew);
-                break;
-            case BOTTOM:
-                cellTarget.setBounds(
-                    tempX, tempY,
-                    tempW, tempH / 2);
-
-                cellNew.setBounds(
-                    tempX, cellTarget.getY() + cellTarget.getH(),
-                    tempW, tempH - cellTarget.getH());
-                FView.SINGLETON_INSTANCE.addDragCell(cellNew);
-                break;
-            case BODY:
-                cellNew = cellTarget;
-                break;
-            default:
-        }
+        cellNew = createCellForDrop(cellTarget, dropzone);
 
         for (final IVDoc<? extends ICDoc> vDoc : docsToMove) {
             cellSrc.removeDoc(vDoc);
@@ -323,6 +295,193 @@ public final class SRearrangingUtil {
         updateBorders();
 
         SLayoutIO.saveLayout(null);
+    }
+
+    //========== Drags involving detached windows (see SFloatingDocs)
+
+    private static boolean isOverMainFrame(final Point screenPoint) {
+        final Window frame = SwingUtilities.getWindowAncestor(pnlDocument);
+        return frame != null && frame.isShowing() && frame.getBounds().contains(screenPoint);
+    }
+
+    private static boolean isOverMainContent(final Point screenPoint) {
+        final JPanel content = FView.SINGLETON_INSTANCE.getPnlContent();
+        return content.isShowing() && new Rectangle(content.getLocationOnScreen(), content.getSize()).contains(screenPoint);
+    }
+
+    private static DragCell getMainCellAt(final Point screenPoint) {
+        for (final DragCell cell : FView.SINGLETON_INSTANCE.getDragCells()) {
+            if (cell.isShowing() && new Rectangle(cell.getLocationOnScreen(), cell.getSize()).contains(screenPoint)) {
+                return cell;
+            }
+        }
+        return null;
+    }
+
+    /** Same zones as for the main window: borders split the target cell, the center adds a tab. */
+    private static Dropzone getZone(final DragCell cell, final Point p) {
+        final int nestingMargin = 30;
+        final Rectangle r = new Rectangle(cell.getLocationOnScreen(), cell.getSize());
+        final int head = SLayoutConstants.HEAD_H;
+        if (p.x < r.x + nestingMargin && p.y > r.y + head) { return Dropzone.LEFT; }
+        if (p.x > r.x + r.width - nestingMargin && p.y > r.y + head) { return Dropzone.RIGHT; }
+        if (p.y < r.y + head + nestingMargin && p.y > r.y + head) { return Dropzone.TOP; }
+        if (p.y > r.y + r.height - nestingMargin) { return Dropzone.BOTTOM; }
+        return Dropzone.BODY;
+    }
+
+    private static Rectangle getZoneBounds(final DragCell cell, final Dropzone zone) {
+        final Rectangle r = new Rectangle(cell.getLocationOnScreen(), cell.getSize());
+        switch (zone) {
+            case LEFT:   return new Rectangle(r.x, r.y, r.width / 2, r.height);
+            case RIGHT:  return new Rectangle(r.x + r.width / 2, r.y, r.width - r.width / 2, r.height);
+            case TOP:    return new Rectangle(r.x, r.y, r.width, r.height / 2);
+            case BOTTOM: return new Rectangle(r.x, r.y + r.height / 2, r.width, r.height - r.height / 2);
+            default:     return r;
+        }
+    }
+
+    /** Tracks a drag whose source or target is a detached window, or which leaves every Forge window. */
+    private static void crossWindowRearrange(final Point p) {
+        crossWindow = true;
+        pnlPreview.setBounds(0, 0, 0, 0);
+        MouseUtil.resetCursor();
+
+        crossTarget = SFloatingDocs.getFloatingCellAt(p);
+        if (crossTarget == null && !SFloatingDocs.isOverFloatingWindow(p) && isOverMainContent(p)) {
+            crossTarget = getMainCellAt(p);
+        }
+
+        if (crossTarget != null) {
+            crossZone = getZone(crossTarget, p);
+            if (crossTarget == cellSrc && (crossZone == Dropzone.BODY || cellSrc.getDocs().size() == docsToMove.size())) {
+                crossZone = Dropzone.NONE; //dropping a cell onto itself changes nothing
+            } else {
+                crossBounds = getZoneBounds(crossTarget, crossZone);
+            }
+        } else if (SFloatingDocs.isOverFloatingWindow(p) || isOverMainFrame(p)) {
+            crossZone = Dropzone.NONE; //e.g. over a title bar
+        } else {
+            crossZone = Dropzone.NEW_WINDOW; //dropped outside Forge: detach into a new window there
+            crossBounds = new Rectangle(p.x - 40, p.y - 10, Math.max(300, cellSrc.getW()), Math.max(200, cellSrc.getH()));
+        }
+
+        if (crossZone == Dropzone.NONE) {
+            hideCrossPreview();
+        } else {
+            showCrossPreview(crossBounds);
+        }
+    }
+
+    private static void endCrossWindowRearrange() {
+        final Dropzone zone = crossZone;
+        final DragCell target = crossTarget;
+        crossZone = Dropzone.NONE;
+        crossTarget = null;
+        final List<IVDoc<? extends ICDoc>> docs = new ArrayList<>(docsToMove);
+
+        if (zone == Dropzone.NONE || docs.isEmpty()) {
+            if (srcSelectedDoc != cellSrc.getSelected()) {
+                SLayoutIO.saveLayout(null); //still need to save layout if selection changed
+            }
+            srcSelectedDoc = null;
+            return;
+        }
+        srcSelectedDoc = null;
+
+        if (zone == Dropzone.NEW_WINDOW) {
+            SFloatingDocs.detach(docs, crossBounds);
+        } else if (target.isFloating()) {
+            SFloatingDocs.moveDocsTo(docs, target, toPlacement(zone));
+        } else { //from a detached window into the main window
+            for (final IVDoc<? extends ICDoc> doc : docs) {
+                SFloatingDocs.removeFromCurrentPlace(doc);
+            }
+            final DragCell cell = createCellForDrop(target, zone);
+            for (final IVDoc<? extends ICDoc> doc : docs) {
+                cell.addDoc(doc);
+                cell.setSelected(doc);
+            }
+            cell.updateRoughBounds();
+            target.updateRoughBounds();
+            target.refresh();
+            cell.validate();
+            cell.refresh();
+            updateBorders();
+        }
+        SLayoutIO.saveLayout(null);
+    }
+
+    private static SFloatingDocs.Placement toPlacement(final Dropzone zone) {
+        switch (zone) {
+            case LEFT:   return SFloatingDocs.Placement.LEFT;
+            case RIGHT:  return SFloatingDocs.Placement.RIGHT;
+            case TOP:    return SFloatingDocs.Placement.ABOVE;
+            case BOTTOM: return SFloatingDocs.Placement.BELOW;
+            default:     return SFloatingDocs.Placement.TAB;
+        }
+    }
+
+    /** Translucent always-on-top window showing where the dragged tab will land, on any monitor. */
+    private static JWindow crossPreview;
+
+    private static void showCrossPreview(final Rectangle bounds) {
+        if (crossPreview == null) {
+            crossPreview = new JWindow();
+            crossPreview.setFocusableWindowState(false);
+            crossPreview.setAlwaysOnTop(true);
+            crossPreview.getContentPane().setBackground(FSkin.getColor(FSkin.Colors.CLR_ACTIVE).getColor());
+            try {
+                crossPreview.setOpacity(0.35f);
+            } catch (final UnsupportedOperationException | IllegalComponentStateException e) {
+                // translucency unsupported: the preview stays opaque
+            }
+        }
+        crossPreview.setBounds(bounds);
+        if (!crossPreview.isVisible()) {
+            crossPreview.setVisible(true);
+        }
+    }
+
+    private static void hideCrossPreview() {
+        if (crossPreview != null && crossPreview.isVisible()) {
+            crossPreview.setVisible(false);
+        }
+    }
+
+    /**
+     * Returns the cell that receives dropped documents: the target itself for {@link Dropzone#BODY},
+     * otherwise a new cell taking half of the target on the given side.
+     */
+    private static DragCell createCellForDrop(final DragCell target, final Dropzone zone) {
+        final int x = target.getX();
+        final int y = target.getY();
+        final int w = target.getW();
+        final int h = target.getH();
+        final DragCell cell = new DragCell();
+
+        switch (zone) {
+            case LEFT:
+                cell.setBounds(x, y, w / 2, h);
+                target.setBounds(x + cell.getW(), y, w - cell.getW(), h);
+                break;
+            case RIGHT:
+                target.setBounds(x, y, w / 2, h);
+                cell.setBounds(target.getX() + target.getW(), y, w - target.getW(), h);
+                break;
+            case TOP:
+                cell.setBounds(x, y, w, h - (h / 2));
+                target.setBounds(x, y + cell.getH(), w, h - cell.getH());
+                break;
+            case BOTTOM:
+                target.setBounds(x, y, w, h / 2);
+                cell.setBounds(x, target.getY() + target.getH(), w, h - target.getH());
+                break;
+            default:
+                return target;
+        }
+        FView.SINGLETON_INSTANCE.addDragCell(cell);
+        return cell;
     }
 
     /** The gap created by displaced panels must be filled.

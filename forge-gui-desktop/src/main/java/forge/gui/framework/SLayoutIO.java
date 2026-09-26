@@ -25,8 +25,10 @@ import com.google.common.collect.MultimapBuilder;
 
 import java.awt.*;
 import java.io.*;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map.Entry;
@@ -49,6 +51,7 @@ public final class SLayoutIO {
         public final static String fs = "fs";
         public final static String floating = "floating";
         public final static String pane = "pane";
+        public final static String split = "split";
         public final static String orient = "orient";
         public final static String div = "div";
     }
@@ -333,25 +336,8 @@ public final class SLayoutIO {
                     writer.add(EF.createAttribute(Property.fs, "true"));
                 }
                 writer.add(NEWLINE);
-                for (final SFloatingDocs.PaneState pane : floating.panes) {
-                    writer.add(TAB);
-                    writer.add(TAB);
-                    writer.add(EF.createStartElement("", "", Property.pane));
-                    writer.add(EF.createAttribute(Property.orient,
-                            pane.orientation == JSplitPane.HORIZONTAL_SPLIT ? ORIENT_RIGHT : ORIENT_BELOW));
-                    writer.add(EF.createAttribute(Property.div, String.valueOf(Math.rint(pane.divider * 1000) / 1000)));
-                    if (pane.selected != null) {
-                        writer.add(EF.createAttribute(Property.sel, pane.selected.toString()));
-                    }
-                    writer.add(NEWLINE);
-                    for (final EDocID doc : pane.docs) {
-                        writer.add(TAB);
-                        createNode(writer, Property.doc, doc.toString());
-                    }
-                    writer.add(TAB);
-                    writer.add(TAB);
-                    writer.add(EF.createEndElement("", "", Property.pane));
-                    writer.add(NEWLINE);
+                if (floating.root != null) {
+                    writeFloatingNode(writer, floating.root, 2);
                 }
                 writer.add(TAB);
                 writer.add(EF.createEndElement("", "", Property.floating));
@@ -561,16 +547,23 @@ public final class SLayoutIO {
 
         LayoutInfo currentKey = null;
         SFloatingDocs.WindowState currentFloating = null;
-        SFloatingDocs.PaneState currentPane = null;
+        SFloatingDocs.NodeState currentPane = null;
+        final Deque<SFloatingDocs.NodeState> openSplits = new ArrayDeque<>();
         while (null != reader && reader.hasNext()) {
             event = reader.nextEvent();
 
-            if (event.isStartElement()) {
+            if (event.isEndElement()) {
+                final String name = event.asEndElement().getName().getLocalPart();
+                if (name.equals(Property.split) && !openSplits.isEmpty()) { openSplits.pop(); }
+                else if (name.equals(Property.pane)) { currentPane = null; }
+            }
+            else if (event.isStartElement()) {
                 element = event.asStartElement();
 
                 if (element.getName().getLocalPart().equals(Property.floating)) {
                     currentFloating = new SFloatingDocs.WindowState();
                     currentPane = null;
+                    openSplits.clear();
                     floatingOut.add(currentFloating);
                     attributes = element.getAttributes();
                     while (attributes.hasNext()) {
@@ -588,33 +581,46 @@ public final class SLayoutIO {
                         else if (atrName.equals(Property.h)) currentFloating.bounds.height = value;
                     }
                 }
-                else if (element.getName().getLocalPart().equals(Property.pane) && currentFloating != null) {
-                    currentPane = new SFloatingDocs.PaneState();
-                    currentFloating.panes.add(currentPane);
+                else if ((element.getName().getLocalPart().equals(Property.split)
+                        || element.getName().getLocalPart().equals(Property.pane)) && currentFloating != null) {
+                    final boolean isSplit = element.getName().getLocalPart().equals(Property.split);
+                    final SFloatingDocs.NodeState node = new SFloatingDocs.NodeState();
+                    node.split = isSplit;
+                    int orientation = JSplitPane.VERTICAL_SPLIT;
+                    double divider = 0.5;
                     attributes = element.getAttributes();
                     while (attributes.hasNext()) {
                         attribute = (Attribute) attributes.next();
                         String atrName = attribute.getName().toString();
 
                         if (atrName.equals(Property.orient)) {
-                            currentPane.orientation = ORIENT_RIGHT.equals(attribute.getValue())
+                            orientation = ORIENT_RIGHT.equals(attribute.getValue())
                                     ? JSplitPane.HORIZONTAL_SPLIT : JSplitPane.VERTICAL_SPLIT;
                         }
-                        else if (atrName.equals(Property.div)) currentPane.divider = Double.parseDouble(attribute.getValue());
-                        else if (atrName.equals(Property.sel)) currentPane.selected = EDocID.valueOf(attribute.getValue());
+                        else if (atrName.equals(Property.div)) divider = Double.parseDouble(attribute.getValue());
+                        else if (atrName.equals(Property.sel)) node.selected = EDocID.valueOf(attribute.getValue());
                     }
+                    if (isSplit) {
+                        node.orientation = orientation;
+                        node.divider = divider;
+                    }
+                    // a pane's orient/div attributes come from the earlier format, where panes were chained below/right
+                    attachFloatingNode(currentFloating, openSplits, node, orientation, divider);
+                    if (isSplit) { openSplits.push(node); }
+                    else { currentPane = node; }
                 }
                 else if (element.getName().getLocalPart().equals(Property.doc) && currentFloating != null) {
                     event = reader.nextEvent();
                     if (currentPane == null) { //single document window, as written by earlier versions
-                        currentPane = new SFloatingDocs.PaneState();
-                        currentFloating.panes.add(currentPane);
+                        currentPane = new SFloatingDocs.NodeState();
+                        attachFloatingNode(currentFloating, openSplits, currentPane, JSplitPane.VERTICAL_SPLIT, 0.5);
                     }
                     currentPane.docs.add(EDocID.valueOf(event.asCharacters().getData()));
                 }
                 else if (element.getName().getLocalPart().equals("cell")) {
                     currentFloating = null;
                     currentPane = null;
+                    openSplits.clear();
                     attributes = element.getAttributes();
                     while (attributes.hasNext()) {
                         attribute = (Attribute) attributes.next();
@@ -635,6 +641,62 @@ public final class SLayoutIO {
             }
         }
         return model;
+    }
+
+    /**
+     * Adds a node read from the layout file to a floating window's pane tree: as the next child of the
+     * innermost open split, or as the root. A second top-level node comes from the earlier chained format
+     * and is attached to everything read so far, below or to the right.
+     */
+    private static void attachFloatingNode(final SFloatingDocs.WindowState window, final Deque<SFloatingDocs.NodeState> openSplits,
+            final SFloatingDocs.NodeState node, final int chainOrientation, final double chainDivider) {
+        if (!openSplits.isEmpty()) {
+            final SFloatingDocs.NodeState parent = openSplits.peek();
+            if (parent.first == null) { parent.first = node; }
+            else if (parent.second == null) { parent.second = node; }
+            return;
+        }
+        if (window.root == null) {
+            window.root = node;
+            return;
+        }
+        final SFloatingDocs.NodeState chain = new SFloatingDocs.NodeState();
+        chain.split = true;
+        chain.orientation = chainOrientation;
+        chain.divider = chainDivider;
+        chain.first = window.root;
+        chain.second = node;
+        window.root = chain;
+    }
+
+    /** Writes a pane tree of a floating window: {@code <split orient div>} with two children, or {@code <pane sel>} with docs. */
+    private static void writeFloatingNode(final XMLEventWriter writer, final SFloatingDocs.NodeState node, final int depth)
+            throws XMLStreamException {
+        for (int i = 0; i < depth; i++) { writer.add(TAB); }
+        if (node.split) {
+            writer.add(EF.createStartElement("", "", Property.split));
+            writer.add(EF.createAttribute(Property.orient,
+                    node.orientation == JSplitPane.HORIZONTAL_SPLIT ? ORIENT_RIGHT : ORIENT_BELOW));
+            writer.add(EF.createAttribute(Property.div, String.valueOf(Math.rint(node.divider * 1000) / 1000)));
+            writer.add(NEWLINE);
+            writeFloatingNode(writer, node.first, depth + 1);
+            writeFloatingNode(writer, node.second, depth + 1);
+            for (int i = 0; i < depth; i++) { writer.add(TAB); }
+            writer.add(EF.createEndElement("", "", Property.split));
+        } else {
+            writer.add(EF.createStartElement("", "", Property.pane));
+            if (node.selected != null) {
+                writer.add(EF.createAttribute(Property.sel, node.selected.toString()));
+            }
+            writer.add(NEWLINE);
+            for (final EDocID doc : node.docs) {
+                for (int i = 2; i < depth; i++) { writer.add(TAB); }
+                createNode(writer, Property.doc, doc.toString());
+            }
+            for (int i = 0; i < depth; i++) { writer.add(TAB); }
+            writer.add(EF.createEndElement("", "", Property.pane));
+        }
+        writer.add(NEWLINE);
     }
 
     private static void createNode(final XMLEventWriter writer0, final String propertyName, final String value) throws XMLStreamException {

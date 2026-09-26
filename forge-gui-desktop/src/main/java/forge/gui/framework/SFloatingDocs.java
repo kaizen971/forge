@@ -29,14 +29,15 @@ import forge.view.FView;
  * Lets documents (tabs) of the drag layout be detached into their own windows,
  * e.g. to move the battlefield, hand or stack of the match screen to a second monitor.
  * <p>
- * A floating window holds one or more panes laid out with split panes (below / to the right),
- * each pane being a {@link DragCell} that can hold several tabs. Floating windows are saved with
- * the screen layout (see {@link SLayoutIO}) and reopened at the same place; closing a window docks
- * its documents back into the main window.
+ * A floating window holds a tree of panes: each leaf is a {@link DragCell} (one or more tabs) and each
+ * node splits its area between two children, below or to the right of each other, with a resizable divider.
+ * Tabs can be moved with the tab right-click menu or dragged between cells of any window (see
+ * {@link SRearrangingUtil}). Floating windows are saved with the screen layout (see {@link SLayoutIO})
+ * and reopened at the same place; closing a window docks its documents back into the main window.
  */
 public final class SFloatingDocs {
-    /** Where a document goes when moved into an existing floating window. */
-    public enum Placement { TAB, BELOW, RIGHT }
+    /** Where documents go in a floating window, relative to a pane (or to the whole window from the menu). */
+    public enum Placement { TAB, ABOVE, BELOW, LEFT, RIGHT }
 
     private static final List<FloatingDocWindow> windows = new ArrayList<>();
 
@@ -63,7 +64,9 @@ public final class SFloatingDocs {
 
     static String getPlacementCaption(final Placement placement) {
         switch (placement) {
+            case ABOVE: return message("lblPlaceAbove", "Above");
             case BELOW: return message("lblPlaceBelow", "Below");
+            case LEFT:  return message("lblPlaceLeft", "To the left");
             case RIGHT: return message("lblPlaceRight", "To the right");
             default:    return message("lblPlaceAsTab", "As a tab");
         }
@@ -80,9 +83,39 @@ public final class SFloatingDocs {
     }
 
     static FloatingDocWindow getWindowOf(final IVDoc<? extends ICDoc> doc) {
+        return doc.getParentCell() == null ? null : getWindowOf(doc.getParentCell());
+    }
+
+    static FloatingDocWindow getWindowOf(final DragCell cell) {
         for (final FloatingDocWindow window : windows) {
-            if (window.getDocs().contains(doc)) {
+            if (window.findLeaf(cell) != null) {
                 return window;
+            }
+        }
+        return null;
+    }
+
+    /** @return true if the screen point is over a visible floating window */
+    static boolean isOverFloatingWindow(final Point screenPoint) {
+        for (final FloatingDocWindow window : windows) {
+            if (window.isShowing() && window.getBounds().contains(screenPoint)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @return the floating cell under the screen point, or null */
+    static DragCell getFloatingCellAt(final Point screenPoint) {
+        for (final FloatingDocWindow window : windows) {
+            if (!window.isShowing() || !window.getBounds().contains(screenPoint)) {
+                continue;
+            }
+            for (final Leaf leaf : window.getLeaves()) {
+                if (leaf.cell.isShowing()
+                        && new Rectangle(leaf.cell.getLocationOnScreen(), leaf.cell.getSize()).contains(screenPoint)) {
+                    return leaf.cell;
+                }
             }
         }
         return null;
@@ -100,38 +133,79 @@ public final class SFloatingDocs {
         if (cell == null) {
             return;
         }
-        final Rectangle bounds = cell.isShowing() ? new Rectangle(cell.getLocationOnScreen(), cell.getSize()) : null;
+        final List<IVDoc<? extends ICDoc>> docs = new ArrayList<>();
+        docs.add(doc);
+        detach(docs, cell.isShowing() ? new Rectangle(cell.getLocationOnScreen(), cell.getSize()) : null);
+    }
 
-        removeFromCurrentPlace(doc);
+    /** Moves documents into a new window with the given screen bounds (a default size when null). */
+    static void detach(final List<IVDoc<? extends ICDoc>> docs, final Rectangle bounds) {
+        if (docs.isEmpty()) {
+            return;
+        }
+        for (final IVDoc<? extends ICDoc> doc : docs) {
+            removeFromCurrentPlace(doc);
+        }
         final FloatingDocWindow window = new FloatingDocWindow(getVisibleBounds(bounds));
         windows.add(window);
-        window.addPane(doc, JSplitPane.VERTICAL_SPLIT, 0.5);
+        final Leaf leaf = new Leaf();
+        window.root = leaf;
+        addDocs(leaf.cell, docs);
+        window.rebuild();
         window.setVisible(true);
         SLayoutIO.saveLayout(null);
     }
 
-    /** Moves a document (from the main window or another floating window) into an existing floating window. */
+    /** Moves a document into an existing floating window, relative to the whole window (tab right-click menu). */
     public static void moveToWindow(final IVDoc<? extends ICDoc> doc, final FloatingDocWindow target, final Placement placement) {
-        final FloatingDocWindow source = getWindowOf(doc);
-        if (source == target && target.getDocs().size() == 1) {
+        final List<IVDoc<? extends ICDoc>> docs = new ArrayList<>();
+        docs.add(doc);
+        moveDocs(docs, target, null, placement);
+        target.toFront();
+    }
+
+    /** Moves documents next to (or into, for {@link Placement#TAB}) a floating cell, e.g. at the end of a tab drag. */
+    static void moveDocsTo(final List<IVDoc<? extends ICDoc>> docs, final DragCell targetCell, final Placement placement) {
+        final FloatingDocWindow target = getWindowOf(targetCell);
+        if (target != null) {
+            moveDocs(docs, target, target.findLeaf(targetCell), placement);
+        }
+    }
+
+    /**
+     * @param targetLeaf pane to place documents into or next to; null for the whole window
+     *                   (tabs then go into its first pane)
+     */
+    private static void moveDocs(final List<IVDoc<? extends ICDoc>> docs, final FloatingDocWindow target,
+            final Leaf targetLeaf, final Placement placement) {
+        final List<IVDoc<? extends ICDoc>> toMove = new ArrayList<>(docs);
+        final DragCell targetCell = targetLeaf != null ? targetLeaf.cell
+                : (target.getLeaves().isEmpty() ? null : target.getLeaves().get(0).cell);
+        if (placement == Placement.TAB) {
+            toMove.removeIf(doc -> doc.getParentCell() == targetCell);
+        }
+        if (toMove.isEmpty()) {
             return;
         }
-        if (placement == Placement.TAB && target.getFirstCell() == doc.getParentCell()) {
+        //moving every document of a pane next to itself, or of a window into itself, would change nothing
+        if (targetLeaf != null && toMove.containsAll(targetLeaf.cell.getDocs())) {
+            return;
+        }
+        if (targetLeaf == null && toMove.containsAll(target.getDocs())) {
             return;
         }
 
-        removeFromCurrentPlace(doc);
-        switch (placement) {
-            case BELOW:
-                target.addPane(doc, JSplitPane.VERTICAL_SPLIT, 0.5);
-                break;
-            case RIGHT:
-                target.addPane(doc, JSplitPane.HORIZONTAL_SPLIT, 0.5);
-                break;
-            default:
-                target.addAsTab(doc);
+        for (final IVDoc<? extends ICDoc> doc : toMove) {
+            removeFromCurrentPlace(doc);
         }
-        target.toFront();
+        if (placement == Placement.TAB && targetCell != null && target.findLeaf(targetCell) != null) {
+            addDocs(targetCell, toMove);
+        } else {
+            final Leaf leaf = new Leaf();
+            target.insert(leaf, targetLeaf, placement == Placement.TAB ? Placement.BELOW : placement);
+            addDocs(leaf.cell, toMove);
+        }
+        target.rebuild();
         SLayoutIO.saveLayout(null);
     }
 
@@ -145,6 +219,14 @@ public final class SFloatingDocs {
         SLayoutIO.saveLayout(null);
     }
 
+    private static void addDocs(final DragCell cell, final List<IVDoc<? extends ICDoc>> docs) {
+        for (final IVDoc<? extends ICDoc> doc : docs) {
+            cell.addDoc(doc);
+        }
+        cell.setSelected(docs.get(docs.size() - 1));
+        cell.refresh();
+    }
+
     private static void closeByUser(final FloatingDocWindow window) {
         final List<IVDoc<? extends ICDoc>> docs = window.getDocs();
         windows.remove(window);
@@ -156,17 +238,22 @@ public final class SFloatingDocs {
         SLayoutIO.saveLayout(null);
     }
 
-    /** Removes a document from its cell, cleaning up the main layout or the floating window it leaves. */
-    private static void removeFromCurrentPlace(final IVDoc<? extends ICDoc> doc) {
+    /**
+     * Removes a document from its cell, cleaning up what it leaves: in the main window the gap is filled,
+     * in a floating window an empty pane is removed (and the window closed once empty).
+     */
+    static void removeFromCurrentPlace(final IVDoc<? extends ICDoc> doc) {
         final DragCell cell = doc.getParentCell();
         if (cell == null) {
             return;
         }
         if (cell.isFloating()) {
-            final FloatingDocWindow window = getWindowOf(doc);
+            final FloatingDocWindow window = getWindowOf(cell);
             cell.removeDoc(doc);
-            if (window != null) {
-                window.removeEmptyPanes();
+            if (window != null && cell.getDocs().isEmpty()) {
+                window.removeLeaf(window.findLeaf(cell));
+            } else {
+                cell.refresh();
             }
             return;
         }
@@ -203,10 +290,13 @@ public final class SFloatingDocs {
 
     //========== Persistence (see SLayoutIO)
 
-    /** Saved state of a pane: its tabs and how it is attached to the panes before it. */
-    static final class PaneState {
+    /** Saved pane tree node: either a split between two children, or a leaf pane holding tabs. */
+    static final class NodeState {
+        boolean split;
         int orientation = JSplitPane.VERTICAL_SPLIT;
         double divider = 0.5;
+        NodeState first;
+        NodeState second;
         EDocID selected;
         final List<EDocID> docs = new ArrayList<>();
     }
@@ -216,7 +306,7 @@ public final class SFloatingDocs {
         /** Normal (non full screen) bounds. */
         final Rectangle bounds = new Rectangle();
         boolean fullScreen;
-        final List<PaneState> panes = new ArrayList<>();
+        NodeState root;
     }
 
     static List<WindowState> getWindowStates() {
@@ -230,30 +320,8 @@ public final class SFloatingDocs {
     /** Reopens a saved floating window, skipping documents already placed elsewhere. */
     static void open(final WindowState state, final Collection<EDocID> excluded) {
         final FloatingDocWindow window = new FloatingDocWindow(getVisibleBounds(state.bounds));
-        for (final PaneState paneState : state.panes) {
-            final List<IVDoc<? extends ICDoc>> docs = new ArrayList<>();
-            for (final EDocID id : paneState.docs) {
-                try {
-                    final IVDoc<? extends ICDoc> doc = id.getDoc();
-                    if (doc != null && !excluded.contains(id) && getWindowOf(doc) == null && !docs.contains(doc)) {
-                        docs.add(doc);
-                    }
-                } catch (final IllegalArgumentException e) {
-                    System.err.println("Failed to get floating doc for " + id);
-                }
-            }
-            if (docs.isEmpty()) {
-                continue;
-            }
-            final DragCell cell = window.addEmptyPane(paneState.orientation, paneState.divider);
-            for (final IVDoc<? extends ICDoc> doc : docs) {
-                cell.addDoc(doc);
-            }
-            if (paneState.selected != null && paneState.docs.contains(paneState.selected)) {
-                cell.setSelected(paneState.selected.getDoc());
-            }
-        }
-        if (window.panes.isEmpty()) {
+        window.root = buildNode(state.root, excluded);
+        if (window.root == null) {
             window.dispose();
             return;
         }
@@ -263,6 +331,47 @@ public final class SFloatingDocs {
             window.setFullScreen(true);
         }
         window.setVisible(true);
+    }
+
+    /** @return the pane tree for a saved node, without the panes whose documents are all unavailable */
+    private static Node buildNode(final NodeState state, final Collection<EDocID> excluded) {
+        if (state == null) {
+            return null;
+        }
+        if (state.split) {
+            final Node first = buildNode(state.first, excluded);
+            final Node second = buildNode(state.second, excluded);
+            if (first == null || second == null) {
+                return first != null ? first : second;
+            }
+            final Split split = new Split(state.orientation, state.divider);
+            split.first = first;
+            split.second = second;
+            return split;
+        }
+
+        final List<IVDoc<? extends ICDoc>> docs = new ArrayList<>();
+        for (final EDocID id : state.docs) {
+            try {
+                final IVDoc<? extends ICDoc> doc = id.getDoc();
+                if (doc != null && !excluded.contains(id) && getWindowOf(doc) == null && !docs.contains(doc)) {
+                    docs.add(doc);
+                }
+            } catch (final IllegalArgumentException e) {
+                System.err.println("Failed to get floating doc for " + id);
+            }
+        }
+        if (docs.isEmpty()) {
+            return null;
+        }
+        final Leaf leaf = new Leaf();
+        for (final IVDoc<? extends ICDoc> doc : docs) {
+            leaf.cell.addDoc(doc);
+        }
+        if (state.selected != null && state.docs.contains(state.selected)) {
+            leaf.cell.setSelected(state.selected.getDoc());
+        }
+        return leaf;
     }
 
     /** Closes every floating window without docking its documents back (the layout is about to be rebuilt). */
@@ -288,26 +397,39 @@ public final class SFloatingDocs {
         return null;
     }
 
-    //========== Window
+    //========== Pane tree
 
-    private static final class Pane {
+    private abstract static class Node {
+    }
+
+    private static final class Leaf extends Node {
         private final DragCell cell = new DragCell();
-        /** How this pane is attached to the panes before it (ignored for the first pane). */
-        private final int orientation;
-        /** Share of the split given to the panes before this one. */
-        private double divider;
 
-        private Pane(final int orientation, final double divider) {
-            this.orientation = orientation;
-            this.divider = Math.max(0.05, Math.min(0.95, divider));
+        private Leaf() {
             cell.setFloating(true);
         }
     }
 
+    private static final class Split extends Node {
+        private final int orientation;
+        /** Share of the area given to the first child. */
+        private double divider;
+        private Node first;
+        private Node second;
+
+        private Split(final int orientation, final double divider) {
+            this.orientation = orientation;
+            this.divider = Math.max(0.05, Math.min(0.95, divider));
+        }
+    }
+
+    //========== Window
+
     @SuppressWarnings("serial")
     static final class FloatingDocWindow extends FDialog {
-        private final List<Pane> panes = new ArrayList<>();
+        private Node root;
         private final List<JSplitPane> splits = new ArrayList<>();
+        private final List<Split> splitNodes = new ArrayList<>();
         private final JPanel content = new JPanel(new BorderLayout());
         private final boolean hasSavedBounds;
         private boolean applyingDividers;
@@ -393,47 +515,98 @@ public final class SFloatingDocs {
             return GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getBounds();
         }
 
+        //========== Tree operations
+
         List<IVDoc<? extends ICDoc>> getDocs() {
             final List<IVDoc<? extends ICDoc>> docs = new ArrayList<>();
-            for (final Pane pane : panes) {
-                docs.addAll(pane.cell.getDocs());
+            for (final Leaf leaf : getLeaves()) {
+                docs.addAll(leaf.cell.getDocs());
             }
             return docs;
         }
 
         DragCell getFirstCell() {
-            return panes.isEmpty() ? null : panes.get(0).cell;
+            final List<Leaf> leaves = getLeaves();
+            return leaves.isEmpty() ? null : leaves.get(0).cell;
         }
 
-        private DragCell addEmptyPane(final int orientation, final double divider) {
-            final Pane pane = new Pane(orientation, divider);
-            panes.add(pane);
-            return pane.cell;
+        private List<Leaf> getLeaves() {
+            final List<Leaf> leaves = new ArrayList<>();
+            collectLeaves(root, leaves);
+            return leaves;
         }
 
-        private void addPane(final IVDoc<? extends ICDoc> doc, final int orientation, final double divider) {
-            final DragCell cell = addEmptyPane(orientation, divider);
-            cell.addDoc(doc);
-            cell.setSelected(doc);
-            rebuild();
+        private static void collectLeaves(final Node node, final List<Leaf> leaves) {
+            if (node instanceof Leaf leaf) {
+                leaves.add(leaf);
+            } else if (node instanceof Split split) {
+                collectLeaves(split.first, leaves);
+                collectLeaves(split.second, leaves);
+            }
         }
 
-        private void addAsTab(final IVDoc<? extends ICDoc> doc) {
-            if (panes.isEmpty()) {
-                addPane(doc, JSplitPane.VERTICAL_SPLIT, 0.5);
+        private Leaf findLeaf(final DragCell cell) {
+            for (final Leaf leaf : getLeaves()) {
+                if (leaf.cell == cell) {
+                    return leaf;
+                }
+            }
+            return null;
+        }
+
+        private Split findParent(final Node node) {
+            return findParent(root, node);
+        }
+
+        private static Split findParent(final Node current, final Node node) {
+            if (!(current instanceof Split split)) {
+                return null;
+            }
+            if (split.first == node || split.second == node) {
+                return split;
+            }
+            final Split inFirst = findParent(split.first, node);
+            return inFirst != null ? inFirst : findParent(split.second, node);
+        }
+
+        private void replace(final Node oldNode, final Node newNode) {
+            final Split parent = findParent(oldNode);
+            if (parent == null) {
+                root = newNode;
+            } else if (parent.first == oldNode) {
+                parent.first = newNode;
+            } else {
+                parent.second = newNode;
+            }
+        }
+
+        /** Inserts a new pane next to a pane (or the whole window when target is null). */
+        private void insert(final Leaf leaf, final Node target, final Placement placement) {
+            final Node anchor = target != null ? target : root;
+            if (anchor == null) {
+                root = leaf;
                 return;
             }
-            final DragCell cell = panes.get(0).cell;
-            cell.addDoc(doc);
-            cell.setSelected(doc);
-            cell.refresh();
-            rebuild();
+            final boolean vertical = placement == Placement.ABOVE || placement == Placement.BELOW;
+            final boolean newFirst = placement == Placement.ABOVE || placement == Placement.LEFT;
+            final Split split = new Split(vertical ? JSplitPane.VERTICAL_SPLIT : JSplitPane.HORIZONTAL_SPLIT, 0.5);
+            replace(anchor, split);
+            split.first = newFirst ? leaf : anchor;
+            split.second = newFirst ? anchor : leaf;
         }
 
-        /** Drops panes left empty; closes the window once it holds no document. */
-        private void removeEmptyPanes() {
-            panes.removeIf(pane -> pane.cell.getDocs().isEmpty());
-            if (panes.isEmpty()) {
+        /** Removes an (empty) pane, its sibling taking its place; closes the window once it holds no pane. */
+        private void removeLeaf(final Leaf leaf) {
+            if (leaf == null) {
+                return;
+            }
+            final Split parent = findParent(leaf);
+            if (parent == null) {
+                root = null;
+            } else {
+                replace(parent, parent.first == leaf ? parent.second : parent.first);
+            }
+            if (root == null) {
                 windows.remove(this);
                 dispose();
             } else {
@@ -441,35 +614,46 @@ public final class SFloatingDocs {
             }
         }
 
-        /** Rebuilds the chain of split panes: each pane is attached below or to the right of the previous ones. */
+        //========== Components
+
+        /** Rebuilds the split panes from the pane tree. */
         private void rebuild() {
             splits.clear();
+            splitNodes.clear();
             content.removeAll();
-            Component root = panes.get(0).cell;
-            for (int i = 1; i < panes.size(); i++) {
-                final Pane pane = panes.get(i);
-                final JSplitPane split = new JSplitPane(pane.orientation, true, root, pane.cell);
-                split.setBorder(null);
-                split.setOpaque(false);
-                split.setDividerSize(8);
-                split.setContinuousLayout(true);
-                split.setResizeWeight(pane.divider);
-                split.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> {
-                    if (applyingDividers) { return; }
-                    final double proportion = getProportion(split);
-                    if (proportion > 0) {
-                        pane.divider = proportion;
-                        SLayoutIO.saveLayout(null);
-                    }
-                });
-                splits.add(split);
-                root = split;
+            if (root != null) {
+                content.add(buildComponent(root), BorderLayout.CENTER);
             }
-            content.add(root, BorderLayout.CENTER);
             updateTitle();
             content.revalidate();
             content.repaint();
             SwingUtilities.invokeLater(this::applyDividers);
+        }
+
+        private Component buildComponent(final Node node) {
+            if (node instanceof Leaf leaf) {
+                return leaf.cell;
+            }
+            final Split splitNode = (Split) node;
+            final JSplitPane split = new JSplitPane(splitNode.orientation, true);
+            splits.add(split); //pre-order: outer split panes come first
+            splitNodes.add(splitNode);
+            split.setTopComponent(buildComponent(splitNode.first));
+            split.setBottomComponent(buildComponent(splitNode.second));
+            split.setBorder(null);
+            split.setOpaque(false);
+            split.setDividerSize(8);
+            split.setContinuousLayout(true);
+            split.setResizeWeight(splitNode.divider);
+            split.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> {
+                if (applyingDividers) { return; }
+                final double proportion = getProportion(split);
+                if (proportion > 0) {
+                    splitNode.divider = proportion;
+                    SLayoutIO.saveLayout(null);
+                }
+            });
+            return split;
         }
 
         /** Divider locations can only be set once split panes have a size: apply them outermost first. */
@@ -477,10 +661,10 @@ public final class SFloatingDocs {
             applyingDividers = true;
             try {
                 validate();
-                for (int i = splits.size() - 1; i >= 0; i--) {
+                for (int i = 0; i < splits.size(); i++) {
                     final JSplitPane split = splits.get(i);
                     if (split.getWidth() > 0 && split.getHeight() > 0) {
-                        split.setDividerLocation(panes.get(i + 1).divider);
+                        split.setDividerLocation(splitNodes.get(i).divider);
                         split.validate();
                     }
                 }
@@ -503,21 +687,35 @@ public final class SFloatingDocs {
             setTitle(String.join(" + ", names));
         }
 
+        //========== State
+
         private WindowState getState() {
             final WindowState state = new WindowState();
             state.bounds.setBounds(isFullScreen() ? boundsBeforeFullScreen : getBounds());
             state.fullScreen = isFullScreen();
-            for (final Pane pane : panes) {
-                final PaneState paneState = new PaneState();
-                paneState.orientation = pane.orientation;
-                paneState.divider = pane.divider;
-                if (pane.cell.getSelected() != null) {
-                    paneState.selected = pane.cell.getSelected().getDocumentID();
+            state.root = getNodeState(root);
+            return state;
+        }
+
+        private static NodeState getNodeState(final Node node) {
+            if (node == null) {
+                return null;
+            }
+            final NodeState state = new NodeState();
+            if (node instanceof Split split) {
+                state.split = true;
+                state.orientation = split.orientation;
+                state.divider = split.divider;
+                state.first = getNodeState(split.first);
+                state.second = getNodeState(split.second);
+            } else {
+                final DragCell cell = ((Leaf) node).cell;
+                if (cell.getSelected() != null) {
+                    state.selected = cell.getSelected().getDocumentID();
                 }
-                for (final IVDoc<? extends ICDoc> doc : pane.cell.getDocs()) {
-                    paneState.docs.add(doc.getDocumentID());
+                for (final IVDoc<? extends ICDoc> doc : cell.getDocs()) {
+                    state.docs.add(doc.getDocumentID());
                 }
-                state.panes.add(paneState);
             }
             return state;
         }
