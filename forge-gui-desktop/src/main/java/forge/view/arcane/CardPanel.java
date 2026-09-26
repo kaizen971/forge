@@ -106,6 +106,8 @@ public class CardPanel extends SkinnedPanel implements CardContainer, IDisposabl
     );
     private static final Color DEFAULT_ZONE_COLOR = new Color(60, 60, 80);
     private static final Color GHOST_TINT = new Color(90, 120, 175, 110);
+    private static final Color ATTACKER_FRAME_COLOR = new Color(255, 90, 40);
+    private static final Color BLOCKER_FRAME_COLOR = new Color(60, 150, 255);
 
     private final CMatchUI matchUI;
     private CardView card;
@@ -329,6 +331,14 @@ public class CardPanel extends SkinnedPanel implements CardContainer, IDisposabl
                 final int n = Math.max(1, Math.round(layer * cardWidth * CardPanel.SELECTED_BORDER_SIZE));
                 g2d.fillRoundRect(cardXOffset - n, (cardYOffset - n) + offset, cardWidth + (n * 2), cardHeight + (n * 2), cornerSize + n, cornerSize + n);
             }
+        }
+
+        // Combat frame (red-orange for attackers, blue for blockers), wider than the hover frame so it stays visible
+        if (getCard() != null && isPreferenceEnabled(FPref.UI_COMBAT_HIGHLIGHTS)
+                && (getCard().isAttacking() || getCard().isBlocking())) {
+            g2d.setColor(getCard().isAttacking() ? ATTACKER_FRAME_COLOR : BLOCKER_FRAME_COLOR);
+            final int n3 = Math.max(2, Math.round(2.5f * cardWidth * CardPanel.SELECTED_BORDER_SIZE));
+            g2d.fillRoundRect(cardXOffset - n3, (cardYOffset - n3) + offset, cardWidth + (n3 * 2), cardHeight + (n3 * 2), cornerSize + n3, cornerSize + n3);
         }
 
         // Magenta outline for when card is chosen

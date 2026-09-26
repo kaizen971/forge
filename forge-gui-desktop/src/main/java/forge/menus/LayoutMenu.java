@@ -89,6 +89,9 @@ public final class LayoutMenu {
         menu.add(getMenuItem_ShowTabs());
         menu.add(getMenuItem_NewCardCountInTab());
         menu.add(getMenuItem_NotifyWhenWaiting());
+        if (isMatch) {
+            menu.add(getMenuItem_CombatHighlights());
+        }
 
         if (isMatch) {
             menu.addSeparator();
@@ -477,6 +480,20 @@ public final class LayoutMenu {
         menuItem.addActionListener(e -> {
             prefs.setPref(FPref.UI_NOTIFY_WHEN_WAITING, menuItem.getState());
             prefs.save();
+        });
+        return menuItem;
+    }
+
+    private static JCheckBoxMenuItem getMenuItem_CombatHighlights() {
+        final JCheckBoxMenuItem menuItem = MenuUtil.createStayOpenCheckBox(
+                localizer.getMessageorUseDefault("lblCombatHighlights", "Highlight combat"));
+        menuItem.setToolTipText(localizer.getMessageorUseDefault("lblCombatHighlightsTooltip",
+                "Frame attackers and blockers, show attackers' power on combat arrows and incoming damage on players."));
+        menuItem.setState(prefs.getPrefBoolean(FPref.UI_COMBAT_HIGHLIGHTS));
+        menuItem.addActionListener(e -> {
+            prefs.setPref(FPref.UI_COMBAT_HIGHLIGHTS, menuItem.getState());
+            prefs.save();
+            Singletons.getView().getFrame().repaint();
         });
         return menuItem;
     }

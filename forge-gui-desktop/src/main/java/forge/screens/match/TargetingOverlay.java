@@ -17,7 +17,11 @@
  */
 package forge.screens.match;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Component;
+import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
@@ -35,6 +39,7 @@ import java.util.Map;
 import java.util.Set;
 
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 
 import forge.Singletons;
 import forge.game.GameEntityView;
@@ -72,12 +77,15 @@ public class TargetingOverlay {
 
     private static class Arc {
         private final int x1, y1, x2, y2;
+        /** Optional badge drawn along the arrow, e.g. the attacker's power. Not part of equality. */
+        private final String label;
 
-        private Arc(final Point end, final Point start) {
+        private Arc(final Point end, final Point start, final String label) {
             x1 = start.x;
             y1 = start.y;
             x2 = end.x;
             y2 = end.y;
+            this.label = label;
         }
         
         @Override
@@ -164,7 +172,7 @@ public class TargetingOverlay {
         Point locOnScreen = this.getPanel().getLocationOnScreen();
 
         for (CardPanel c : cardPanels) {
-            if (c.isShowing()) {
+            if (c.isShowing() && isInOverlayWindow(c)) {
 	            cardLocOnScreen = c.getCardLocationOnScreen();
             endpoints.put(c.getCard().getId(), new Point(
                 (int) (cardLocOnScreen.getX() - locOnScreen.getX() + (float)c.getWidth() * CardPanel.TARGET_ORIGIN_FACTOR_X),
@@ -190,7 +198,7 @@ public class TargetingOverlay {
         }
 
         //draw arrow connecting active item on stack
-        if (activeStackItem != null) {
+        if (activeStackItem != null && isInOverlayWindow(activeStackItem)) {
             Point itemLocOnScreen = activeStackItem.getLocationOnScreen();
             if (itemLocOnScreen != null) {
                 itemLocOnScreen.x += StackInstanceTextArea.CARD_WIDTH * CardPanel.TARGET_ORIGIN_FACTOR_X + StackInstanceTextArea.PADDING - locOnScreen.getX();
@@ -316,7 +324,7 @@ public class TargetingOverlay {
         Point locOnScreen = this.getPanel().getLocationOnScreen();
 
         for (CardPanel c : cardPanels) {
-            if (c.isShowing()) {
+            if (c.isShowing() && isInOverlayWindow(c)) {
 	            cardLocOnScreen = c.getCardLocationOnScreen();
 	            endpoints.put(c.getCard().getId(), new Point(
 	                (int) (cardLocOnScreen.getX() - locOnScreen.getX() + (float)c.getWidth() * CardPanel.TARGET_ORIGIN_FACTOR_X),
@@ -335,7 +343,7 @@ public class TargetingOverlay {
 
         final StackInstanceTextArea activeStackItem = matchUI.getCStack().getView().getHoveredItem();
 
-        if (activeStackItem != null) {
+        if (activeStackItem != null && isInOverlayWindow(activeStackItem)) {
             // Add event listeners to the stack item to repaint on mouse
             // entry/exit, to clear up visual artifacts of our arrows
             if (stackItemIDs.add(activeStackItem.hashCode())) {
@@ -390,9 +398,28 @@ public class TargetingOverlay {
         }
     }
 
+    private static boolean showCombatHighlights() {
+        return FModel.getPreferences().getPrefBoolean(FPref.UI_COMBAT_HIGHLIGHTS);
+    }
+
+    private static String getPowerLabel(final CardView attacker) {
+        if (!showCombatHighlights() || attacker.getCurrentState() == null) {
+            return null;
+        }
+        return String.valueOf(attacker.getCurrentState().getPower());
+    }
+
+    /**
+     * The overlay only covers the main window: components in a detached window (see SFloatingDocs)
+     * are on another surface, possibly another monitor, and must not get arrows.
+     */
+    private boolean isInOverlayWindow(final Component c) {
+        return SwingUtilities.getWindowAncestor(c) == SwingUtilities.getWindowAncestor(pnl);
+    }
+
     private Point getPlayerTargetingArrowPoint(final PlayerView p, final Point locOnScreen) {
         final JPanel avatarArea = matchUI.getFieldViewFor(p).getAvatarArea();
-        if(!avatarArea.isShowing()) {
+        if(!avatarArea.isShowing() || !isInOverlayWindow(avatarArea)) {
             return null;
         }
 
@@ -403,11 +430,15 @@ public class TargetingOverlay {
     }
 
     private void addArc(Point end, Point start, ArcConnection connects) {
+        addArc(end, start, connects, null);
+    }
+
+    private void addArc(Point end, Point start, ArcConnection connects, String label) {
         if (start == null || end == null) {
             return;
         }
-        
-        Arc newArc = new Arc(end,start);
+
+        Arc newArc = new Arc(end, start, label);
         
         switch (connects) {
             case Friends:
@@ -460,20 +491,20 @@ public class TargetingOverlay {
             final GameEntityView defender = combat.getDefender(c);
             // if c is attacking a planeswalker
             if (defender instanceof CardView) {
-                addArc(endpoints.get(defender.getId()), endpoints.get(c.getId()), ArcConnection.FoesAttacking);
+                addArc(endpoints.get(defender.getId()), endpoints.get(c.getId()), ArcConnection.FoesAttacking, getPowerLabel(c));
             }
             // if c is attacking a player
             if (defender instanceof PlayerView) {
                 final JPanel avatarArea = matchUI.getFieldViewFor((PlayerView)defender).getAvatarArea();
-                if(avatarArea.isShowing()) {
+                if(avatarArea.isShowing() && isInOverlayWindow(avatarArea)) {
                     Point locOnScreen = this.getPanel().getLocationOnScreen();
                     Point point = getPlayerTargetingArrowPoint((PlayerView)defender, locOnScreen);
-                    addArc(point, endpoints.get(c.getId()), ArcConnection.FoesAttacking);
+                    addArc(point, endpoints.get(c.getId()), ArcConnection.FoesAttacking, getPowerLabel(c));
                 }
             }
             // if c is a planeswalker that's being attacked
             for (final CardView pwAttacker : combat.getAttackersOf(c)) {
-                addArc(endpoints.get(c.getId()), endpoints.get(pwAttacker.getId()), ArcConnection.FoesAttacking);
+                addArc(endpoints.get(c.getId()), endpoints.get(pwAttacker.getId()), ArcConnection.FoesAttacking, getPowerLabel(pwAttacker));
             }
             for (final CardView attackingCard : combat.getAttackers()) {
                 final Iterable<CardView> cards = combat.getPlannedBlockers(attackingCard);
@@ -488,6 +519,10 @@ public class TargetingOverlay {
         }
     }
 
+    private static final Color ARROW_SHADOW = new Color(0, 0, 0, 90);
+    private static final Color ARROW_OUTLINE = new Color(0, 0, 0, 140);
+    private static final Color INCOMING_DAMAGE_COLOR = new Color(210, 40, 40);
+
     private class OverlayPanel extends SkinnedPanel {
         private final boolean useThrottling = FModel.getPreferences().getPrefBoolean(FPref.UI_TIMED_TARGETING_OVERLAY_UPDATES);
 
@@ -497,8 +532,8 @@ public class TargetingOverlay {
             float p2x = length, p2y = 0;
             float cx = length / 2, cy = length / 8f * bendPercent;
 
-            int bodyWidth = 15;
-            float headSize = 20;
+            int bodyWidth = 10;
+            float headSize = 24;
 
             float adjSize, ex, ey, abs_e;
             adjSize = (float) (bodyWidth / 2 / Math.sqrt(2));
@@ -546,11 +581,18 @@ public class TargetingOverlay {
             Area arrow = getArrow(length, bendPercent);
             AffineTransform af = g2d.getTransform();
 
+            g2d.translate(startX + 2, startY + 3);
+            g2d.rotate(Math.atan2(ey, ex));
+            g2d.setColor(ARROW_SHADOW); //soft drop shadow instead of a hard black outline
+            g2d.fill(arrow);
+            g2d.setTransform(af);
+
             g2d.translate(startX, startY);
             g2d.rotate(Math.atan2(ey, ex));
-            g2d.setColor(color); 
+            g2d.setColor(color);
             g2d.fill(arrow);
-            g2d.setColor(Color.BLACK);
+            g2d.setColor(ARROW_OUTLINE);
+            g2d.setStroke(new BasicStroke(1.2f));
             g2d.draw(arrow);
 
             g2d.setTransform(af);
@@ -560,6 +602,68 @@ public class TargetingOverlay {
             for (Arc arc : arcs) {
                 drawArrow(g2d, arc.x1, arc.y1, arc.x2, arc.y2, color);
             }
+            for (Arc arc : arcs) {
+                if (arc.label != null) {
+                    //badge at 60% of the way, closer to the target to stay clear of the attacking card
+                    drawBadge(g2d, arc.x1 + (arc.x2 - arc.x1) * 3 / 5, arc.y1 + (arc.y2 - arc.y1) * 3 / 5,
+                            arc.label, opaque(color), 11);
+                }
+            }
+        }
+
+        /** Round badge with centered bold text, e.g. an attacker's power or the damage a player is about to take. */
+        private void drawBadge(Graphics2D g2d, int centerX, int centerY, String text, Color fill, int fontSize) {
+            g2d.setFont(g2d.getFont().deriveFont(Font.BOLD, (float) fontSize));
+            final FontMetrics fm = g2d.getFontMetrics();
+            final int h = fm.getHeight() + 4;
+            final int w = Math.max(h, fm.stringWidth(text) + 12);
+            final int x = centerX - w / 2;
+            final int y = centerY - h / 2;
+
+            g2d.setColor(ARROW_SHADOW);
+            g2d.fillRoundRect(x + 1, y + 2, w, h, h, h);
+            g2d.setColor(fill);
+            g2d.fillRoundRect(x, y, w, h, h, h);
+            g2d.setColor(Color.WHITE);
+            g2d.setStroke(new BasicStroke(1.5f));
+            g2d.drawRoundRect(x, y, w, h, h, h);
+            g2d.drawString(text, centerX - fm.stringWidth(text) / 2, y + (h - fm.getHeight()) / 2 + fm.getAscent());
+        }
+
+        /**
+         * Shows on each attacked player's avatar the damage they take if nothing else changes:
+         * total power of their unblocked attackers (an estimate: ignores trample, double strike, prevention...).
+         */
+        private void drawIncomingDamage(Graphics2D g2d, CombatView combat, Color color) {
+            final Point locOnScreen = getPanel().getLocationOnScreen();
+            for (final GameEntityView defender : combat.getDefenders()) {
+                if (!(defender instanceof PlayerView player)) {
+                    continue;
+                }
+                int damage = 0;
+                for (final CardView attacker : combat.getAttackersOf(defender)) {
+                    if (isUnblocked(combat, attacker) && attacker.getCurrentState() != null) {
+                        damage += Math.max(0, attacker.getCurrentState().getPower());
+                    }
+                }
+                if (damage <= 0) {
+                    continue;
+                }
+                final Point point = getPlayerTargetingArrowPoint(player, locOnScreen);
+                if (point != null) {
+                    drawBadge(g2d, point.x, point.y, "-" + damage, color, 18);
+                }
+            }
+        }
+
+        private boolean isUnblocked(CombatView combat, CardView attacker) {
+            final Iterable<CardView> blockers = combat.getBlockers(attacker);
+            final Iterable<CardView> planned = combat.getPlannedBlockers(attacker);
+            return (blockers == null || !blockers.iterator().hasNext()) && (planned == null || !planned.iterator().hasNext());
+        }
+
+        private Color opaque(Color c) {
+            return new Color(c.getRed(), c.getGreen(), c.getBlue());
         }
 
         /**
@@ -582,7 +686,10 @@ public class TargetingOverlay {
             final ArcState overlaystate = matchUI.getCDock().getArcState();
 
             // Arcs are off
-            if (overlaystate == ArcState.OFF) { return; }
+            if (overlaystate == ArcState.OFF) {
+                paintIncomingDamage(g);
+                return;
+            }
 
             // Arc drawing
             boolean assembled = false;
@@ -602,6 +709,7 @@ public class TargetingOverlay {
                     // The original (non-throttled) code did not do this repaint.
                     FView.SINGLETON_INSTANCE.getFrame().repaint();
                 }
+                paintIncomingDamage(g);
                 return;
             }
 
@@ -625,9 +733,25 @@ public class TargetingOverlay {
             drawArcs(g2d, colorOther, arcsFriend);
             drawArcs(g2d, colorCombatAtk, arcsFoeAtk);
             drawArcs(g2d, colorCombat, arcsFoeDef);
+            paintIncomingDamage(g);
 
             if (assembled || !useThrottling) {
                 FView.SINGLETON_INSTANCE.getFrame().repaint(); // repaint the match UI
+            }
+        }
+
+        private void paintIncomingDamage(final Graphics g) {
+            final GameView gameView = matchUI.getGameView();
+            if (!showCombatHighlights() || gameView == null || gameView.getCombat() == null) {
+                return;
+            }
+            final Graphics2D g2d = (Graphics2D) g.create();
+            try {
+                g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                drawIncomingDamage(g2d, gameView.getCombat(), INCOMING_DAMAGE_COLOR);
+            } finally {
+                g2d.dispose();
             }
         }
     }

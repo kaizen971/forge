@@ -118,6 +118,7 @@ public class ForgePreferences extends AbstractPreferences<ForgePreferences.FPref
         UI_LOCK_TITLE_BAR ("false"),
         UI_HIDE_GAME_TABS ("false"),
         UI_NOTIFY_WHEN_WAITING ("true"),
+        UI_COMBAT_HIGHLIGHTS ("true"),
         UI_MULTIPLAYER_FIELD_LAYOUT ("OFF"),
         UI_MULTIPLAYER_FIELD_PANELS ("SPLIT"),
         UI_CLOSE_ACTION ("NONE"),
