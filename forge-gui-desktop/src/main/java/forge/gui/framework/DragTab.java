@@ -3,7 +3,11 @@ package forge.gui.framework;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.border.EmptyBorder;
 
 import forge.toolbox.FSkin;
@@ -37,6 +41,43 @@ public final class DragTab extends SkinnedLabel implements ILocalRepaint {
 
         this.addMouseListener(SRearrangingUtil.getRearrangeClickEvent());
         this.addMouseMotionListener(SRearrangingUtil.getRearrangeDragEvent());
+        this.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(final MouseEvent e) {
+                if (e.isPopupTrigger()) { showContextMenu(e); }
+            }
+
+            @Override
+            public void mouseReleased(final MouseEvent e) {
+                if (e.isPopupTrigger()) { showContextMenu(e); }
+            }
+        });
+    }
+
+    /** Right-click menu to detach this tab's document into its own window (e.g. on a second monitor), or dock it back. */
+    private void showContextMenu(final MouseEvent e) {
+        final IVDoc<? extends ICDoc> doc = getDoc();
+        if (doc == null) { return; }
+
+        final JPopupMenu menu = new JPopupMenu();
+        final JMenuItem item;
+        if (SFloatingDocs.isFloating(doc)) {
+            item = new JMenuItem(SFloatingDocs.getReattachCaption());
+            item.addActionListener(evt -> SFloatingDocs.reattach(doc));
+        } else {
+            item = new JMenuItem(SFloatingDocs.getDetachCaption());
+            item.addActionListener(evt -> SFloatingDocs.detach(doc));
+        }
+        menu.add(item);
+        menu.show(this, e.getX(), e.getY());
+    }
+
+    private IVDoc<? extends ICDoc> getDoc() {
+        if (getParent() == null || !(getParent().getParent() instanceof DragCell cell)) { return null; }
+        for (final IVDoc<? extends ICDoc> doc : cell.getDocs()) {
+            if (doc.getTabLabel() == this) { return doc; }
+        }
+        return null;
     }
 
     /** @param isSelected0 &emsp; boolean */

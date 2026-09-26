@@ -86,6 +86,10 @@ public final class SRearrangingUtil {
     private static void startRearrange(final MouseEvent e) {
         cellSrc = (DragCell) ((Container) e.getSource()).getParent().getParent();
         docsToMove.clear();
+        if (cellSrc.isFloating()) { //floating windows are not part of the drag layout
+            cellSrc = null;
+            return;
+        }
         dropzone = Dropzone.NONE;
 
         // Save selected tab in case this tab will be dragged.
@@ -119,6 +123,7 @@ public final class SRearrangingUtil {
      *  @param e &emsp; {@link java.awt.event.MouseEvent}
      */
     private static void rearrange(final MouseEvent e) {
+        if (cellSrc == null) { return; }
         // nestingMargin controls the thickness of the "zones" bordering
         // the center body.
         final int nestingMargin = 30;
@@ -216,6 +221,7 @@ public final class SRearrangingUtil {
      * transfer docs and remove + resize cells as necessary.
      */
     private static void endRearrange() {
+        if (cellSrc == null) { return; }
         // Resize preview panel in preparation for next event.
         MouseUtil.resetCursor();
         pnlPreview.setVisible(false);

@@ -53,6 +53,7 @@ public final class DragCell extends JPanel implements ILocalRepaint {
     private final JLabel lblHandle = new DragHandle();
     private final JLabel lblOverflow = new JLabel();
     private IVDoc<? extends ICDoc> docSelected = null;
+    private boolean floating = false;
 
     public DragCell() {
         super(new MigLayout("insets 0, gap 0, wrap 2"));
@@ -93,7 +94,7 @@ public final class DragCell extends JPanel implements ILocalRepaint {
      */
     public void doCellLayout(final boolean showTabs) {
         this.removeAll();
-        final int borderT = SLayoutConstants.BORDER_T;
+        final int borderT = floating ? 0 : SLayoutConstants.BORDER_T;
         final int headH = ((showTabs || allDocs.size() > 1) ? SLayoutConstants.HEAD_H : 0);
         this.add(pnlHead,
                 "w 100% - " + borderT + "px!" + ", " + "h " + headH + "px!");
@@ -114,6 +115,19 @@ public final class DragCell extends JPanel implements ILocalRepaint {
     private static boolean showGameTabs() {
         final ForgePreferences prefs = FModel.getPreferences();
         return !prefs.getPrefBoolean(FPref.UI_HIDE_GAME_TABS);
+    }
+
+    /**
+     * A floating cell lives in its own window (see {@link SFloatingDocs}) instead of the
+     * main window's drag layout: it has no resize borders and cannot be rearranged.
+     */
+    public void setFloating(final boolean floating0) {
+        floating = floating0;
+        doCellLayout(showGameTabs());
+    }
+
+    public boolean isFloating() {
+        return floating;
     }
 
     /** @return {@link javax.swing.JPanel} */
