@@ -233,6 +233,14 @@ public class FDialog extends SkinnedDialog implements ITitleBarOwner, KeyEventDi
         return allowResize;
     }
 
+    /**
+     * Override to return true (a constant: it is called while the title bar is built) to show a full screen
+     * button in the title bar; {@link #isFullScreen()} and {@link #setFullScreen(boolean)} must then be implemented.
+     */
+    public boolean supportsFullScreen() {
+        return false;
+    }
+
     public FTitleBar getTitleBar() {
         return titleBar;
     }

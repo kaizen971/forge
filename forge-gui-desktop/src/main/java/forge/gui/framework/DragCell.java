@@ -130,6 +130,17 @@ public final class DragCell extends JPanel implements ILocalRepaint {
         return floating;
     }
 
+    /**
+     * Floating cells sit in split panes, which cannot move their divider past a component's minimum size:
+     * keep it small so panes can be resized freely (the content, e.g. a battlefield, would otherwise ask for most of the screen).
+     */
+    @Override
+    public Dimension getMinimumSize() {
+        return floating ? new Dimension(FLOATING_MIN_SIZE, FLOATING_MIN_SIZE) : super.getMinimumSize();
+    }
+
+    private static final int FLOATING_MIN_SIZE = 60;
+
     /** @return {@link javax.swing.JPanel} */
     public JPanel getHead() {
         return DragCell.this.pnlHead;

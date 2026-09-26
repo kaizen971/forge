@@ -2,6 +2,7 @@ package forge.gui.framework;
 
 import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
 import java.awt.Point;
@@ -212,7 +213,9 @@ public final class SFloatingDocs {
 
     /** Saved state of a floating window; bounds are absolute screen pixels so windows can live on another monitor. */
     static final class WindowState {
+        /** Normal (non full screen) bounds. */
         final Rectangle bounds = new Rectangle();
+        boolean fullScreen;
         final List<PaneState> panes = new ArrayList<>();
     }
 
@@ -256,6 +259,9 @@ public final class SFloatingDocs {
         }
         windows.add(window);
         window.rebuild();
+        if (state.fullScreen) {
+            window.setFullScreen(true);
+        }
         window.setVisible(true);
     }
 
@@ -305,12 +311,15 @@ public final class SFloatingDocs {
         private final JPanel content = new JPanel(new BorderLayout());
         private final boolean hasSavedBounds;
         private boolean applyingDividers;
+        /** Window bounds to restore when leaving full screen; null when not in full screen. */
+        private Rectangle boundsBeforeFullScreen;
 
         private FloatingDocWindow(final Rectangle bounds) {
             super(Singletons.getView().getFrame(), false, true, "0");
             hasSavedBounds = bounds != null;
             setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
             content.setOpaque(false);
+            content.setMinimumSize(new Dimension(0, 0)); //always fit the window instead of overflowing it
             add(content, "grow, push");
 
             if (hasSavedBounds) {
@@ -342,6 +351,46 @@ public final class SFloatingDocs {
         public void setLocationRelativeTo(final Component c) {
             if (hasSavedBounds) { return; } //keep the saved / detached position, e.g. on a second monitor
             super.setLocationRelativeTo(c);
+        }
+
+        //========== Full screen: covers the whole monitor the window is on
+
+        @Override
+        public boolean supportsFullScreen() {
+            return true;
+        }
+
+        @Override
+        public boolean isFullScreen() {
+            return boundsBeforeFullScreen != null;
+        }
+
+        @Override
+        public void setFullScreen(final boolean fullScreen) {
+            if (fullScreen == isFullScreen()) { return; }
+            if (fullScreen) {
+                boundsBeforeFullScreen = getBounds();
+                setBounds(getScreenBounds(boundsBeforeFullScreen));
+            } else {
+                final Rectangle restore = boundsBeforeFullScreen;
+                boundsBeforeFullScreen = null;
+                setBounds(restore);
+            }
+            getTitleBar().refreshFullScreenButton();
+            SwingUtilities.invokeLater(this::applyDividers);
+            SLayoutIO.saveLayout(null);
+        }
+
+        /** @return bounds of the monitor containing the center of the given area (default monitor if none) */
+        private static Rectangle getScreenBounds(final Rectangle area) {
+            final Point center = new Point((int) area.getCenterX(), (int) area.getCenterY());
+            for (final GraphicsDevice device : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
+                final Rectangle screen = device.getDefaultConfiguration().getBounds();
+                if (screen.contains(center)) {
+                    return screen;
+                }
+            }
+            return GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getBounds();
         }
 
         List<IVDoc<? extends ICDoc>> getDocs() {
@@ -402,7 +451,8 @@ public final class SFloatingDocs {
                 final JSplitPane split = new JSplitPane(pane.orientation, true, root, pane.cell);
                 split.setBorder(null);
                 split.setOpaque(false);
-                split.setDividerSize(6);
+                split.setDividerSize(8);
+                split.setContinuousLayout(true);
                 split.setResizeWeight(pane.divider);
                 split.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> {
                     if (applyingDividers) { return; }
@@ -455,7 +505,8 @@ public final class SFloatingDocs {
 
         private WindowState getState() {
             final WindowState state = new WindowState();
-            state.bounds.setBounds(getBounds());
+            state.bounds.setBounds(isFullScreen() ? boundsBeforeFullScreen : getBounds());
+            state.fullScreen = isFullScreen();
             for (final Pane pane : panes) {
                 final PaneState paneState = new PaneState();
                 paneState.orientation = pane.orientation;

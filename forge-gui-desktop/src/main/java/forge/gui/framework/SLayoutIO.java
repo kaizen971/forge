@@ -329,6 +329,9 @@ public final class SLayoutIO {
                 writer.add(EF.createAttribute(Property.y, String.valueOf(bounds.y)));
                 writer.add(EF.createAttribute(Property.w, String.valueOf(bounds.width)));
                 writer.add(EF.createAttribute(Property.h, String.valueOf(bounds.height)));
+                if (floating.fullScreen) {
+                    writer.add(EF.createAttribute(Property.fs, "true"));
+                }
                 writer.add(NEWLINE);
                 for (final SFloatingDocs.PaneState pane : floating.panes) {
                     writer.add(TAB);
@@ -573,8 +576,12 @@ public final class SLayoutIO {
                     while (attributes.hasNext()) {
                         attribute = (Attribute) attributes.next();
                         String atrName = attribute.getName().toString();
-                        int value = Integer.parseInt(attribute.getValue());
 
+                        if (atrName.equals(Property.fs)) {
+                            currentFloating.fullScreen = Boolean.parseBoolean(attribute.getValue());
+                            continue;
+                        }
+                        int value = Integer.parseInt(attribute.getValue());
                         if (atrName.equals(Property.x))      currentFloating.bounds.x = value;
                         else if (atrName.equals(Property.y)) currentFloating.bounds.y = value;
                         else if (atrName.equals(Property.w)) currentFloating.bounds.width = value;

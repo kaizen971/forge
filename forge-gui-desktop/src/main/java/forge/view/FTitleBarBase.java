@@ -85,12 +85,28 @@ public abstract class FTitleBarBase extends SkinnedMenuBar {
             layout.putConstraint(SpringLayout.SOUTH, btnUpdateShortcut, 0, SpringLayout.SOUTH, btnMinimize);
 
         }
+        else if (owner instanceof FDialog dialog && dialog.supportsFullScreen()) { //e.g. detached layout windows
+            add(btnClose);
+            layout.putConstraint(SpringLayout.EAST, btnClose, 0, SpringLayout.EAST, this);
+            layout.putConstraint(SpringLayout.SOUTH, btnClose, 0, SpringLayout.SOUTH, this);
+
+            add(btnFullScreen);
+            layout.putConstraint(SpringLayout.EAST, btnFullScreen, 0, SpringLayout.WEST, btnClose);
+            layout.putConstraint(SpringLayout.SOUTH, btnFullScreen, 0, SpringLayout.SOUTH, btnClose);
+            refreshFullScreenButton();
+        }
         else {
             int offset = owner instanceof FDialog && ((FDialog)owner).allowResize() ? 0 : -1;
             add(btnClose);
             layout.putConstraint(SpringLayout.EAST, btnClose, offset, SpringLayout.EAST, this);
             layout.putConstraint(SpringLayout.SOUTH, btnClose, 0, SpringLayout.SOUTH, this);
         }
+    }
+
+    /** Updates the full screen button tooltip and icon after the owner entered or left full screen. */
+    public void refreshFullScreenButton() {
+        btnFullScreen.setToolTipText(Localizer.getInstance().getMessage(owner.isFullScreen() ? "lblExitFullScreen" : "lblFullScreen"));
+        btnFullScreen.repaintSelf();
     }
 
     public abstract void setTitle(String title);
