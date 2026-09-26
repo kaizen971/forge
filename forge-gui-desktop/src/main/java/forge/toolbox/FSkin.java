@@ -30,6 +30,7 @@ import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Image;
+import java.awt.Insets;
 import java.awt.LayoutManager;
 import java.awt.Point;
 import java.awt.Rectangle;
@@ -101,6 +102,10 @@ import javax.swing.table.JTableHeader;
 import javax.swing.table.TableColumnModel;
 import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.JTextComponent;
+
+import com.formdev.flatlaf.FlatDarkLaf;
+import com.formdev.flatlaf.FlatLaf;
+import com.formdev.flatlaf.FlatLightLaf;
 
 import forge.Singletons;
 import forge.gui.FThreads;
@@ -174,6 +179,11 @@ public class FSkin {
      */
     public static Color alphaColor(final Color clr0, final int alpha) {
         return new Color(clr0.getRed(), clr0.getGreen(), clr0.getBlue(), alpha);
+    }
+
+    /** @return true when the modern FlatLaf look and feel is active (false when falling back to Metal). */
+    public static boolean isFlatLaf() {
+        return UIManager.getLookAndFeel() instanceof FlatLaf;
     }
 
     /**
@@ -1692,7 +1702,10 @@ public class FSkin {
          * Sets the look and feel of the GUI based on the selected Forge theme.
          */
         private void setForgeLookAndFeel(final JFrame appFrame) {
-            if (setMetalLookAndFeel(appFrame)) {
+            if (setFlatLookAndFeel(appFrame)) {
+                setFlatLafDefaults();
+                setTextEditLookAndFeel();
+            } else if (setMetalLookAndFeel(appFrame)) {
                 setMenusLookAndFeel();
                 setComboBoxLookAndFeel();
                 setTabbedPaneLookAndFeel();
@@ -1701,6 +1714,51 @@ public class FSkin {
                 setTextEditLookAndFeel();
             }
             onInit = false;
+        }
+
+        /**
+         * Sets the modern FlatLaf look and feel, themed from the current skin colors.
+         * Falls back to Metal (see {@link #setMetalLookAndFeel}) if FlatLaf cannot be installed.
+         */
+        private boolean setFlatLookAndFeel(final JFrame appFrame) {
+            try {
+                final Color background = getColor(Colors.CLR_THEME).color;
+                final Map<String, String> skinDefaults = new HashMap<>();
+                skinDefaults.put("@background", toHex(background));
+                skinDefaults.put("@foreground", toHex(FORE_COLOR));
+                skinDefaults.put("@accentColor", toHex(getColor(Colors.CLR_ACTIVE).color));
+                FlatLaf.setGlobalExtraDefaults(skinDefaults);
+
+                UIManager.setLookAndFeel(isColorBright(background) ? new FlatLightLaf() : new FlatDarkLaf());
+                SwingUtilities.updateComponentTreeUI(appFrame);
+                return true;
+            } catch (UnsupportedLookAndFeelException | RuntimeException e) {
+                e.printStackTrace();
+                return false;
+            }
+        }
+
+        /**
+         * Rounded corners, slim scrollbars and skin fonts on top of FlatLaf's defaults.
+         */
+        private void setFlatLafDefaults() {
+            UIManager.put("Component.arc", 8);
+            UIManager.put("Button.arc", 8);
+            UIManager.put("TextComponent.arc", 6);
+            UIManager.put("CheckBox.arc", 4);
+            UIManager.put("ProgressBar.arc", 8);
+            UIManager.put("Component.focusWidth", 1);
+            UIManager.put("ScrollBar.width", 10);
+            UIManager.put("ScrollBar.thumbArc", 999);
+            UIManager.put("ScrollBar.thumbInsets", new Insets(2, 2, 2, 2));
+            UIManager.put("ScrollBar.showButtons", false);
+            UIManager.put("ScrollBar.track", new Color(0, 0, 0, 0));
+            UIManager.put("ScrollBar.hoverThumbWithTrack", true);
+            UIManager.put("ComboBox.font", getDefaultFont("ComboBox.font"));
+        }
+
+        private static String toHex(final Color c) {
+            return String.format("#%06X", c.getRGB() & 0xFFFFFF);
         }
 
         /**
@@ -2340,6 +2398,11 @@ public class FSkin {
         public SkinnedScrollPane(final Component comp, final int vsbPolicy, final int hsbPolicy) { super(comp, vsbPolicy, hsbPolicy); init(); }
 
         private void init() {
+            if (isFlatLaf()) { //FlatLaf already provides slim rounded scrollbars
+                getVerticalScrollBar().setOpaque(false);
+                getHorizontalScrollBar().setOpaque(false);
+                return;
+            }
             new SkinScrollBarUI(getVerticalScrollBar(), true);
             new SkinScrollBarUI(getHorizontalScrollBar(), false);
         }

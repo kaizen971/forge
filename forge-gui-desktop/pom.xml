@@ -324,6 +324,11 @@ try {
             <version>4.2</version>
         </dependency>
         <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+            <version>3.7.2</version>
+        </dependency>
+        <dependency>
             <groupId>com.mortennobel</groupId>
             <artifactId>java-image-scaling</artifactId>
             <version>0.8.6</version>
