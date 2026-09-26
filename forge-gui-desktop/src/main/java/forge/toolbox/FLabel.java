@@ -546,6 +546,10 @@ public class FLabel extends SkinnedLabel implements ILocalRepaint, IButton {
         final int h = getHeight();
 
         final boolean paintWithHover = hoverable && hovered && isEnabled();
+        if (FSkin.isFlatLaf() && (opaque || selectable)) {
+            paintModern(g2d, w, h, paintWithHover);
+            return;
+        }
         final Composite oldComp = g2d.getComposite();
         if (hoverable) {
             g2d.setComposite(paintWithHover ? alphaStrong : alphaDim);
@@ -581,6 +585,26 @@ public class FLabel extends SkinnedLabel implements ILocalRepaint, IButton {
         if (hasFocus() && isEnabled()) {
             paintFocus(g2d, w, h);
         }
+    }
+
+    /** Flat rounded button look used with FlatLaf; selectable labels only get a background when hovered or selected. */
+    private void paintModern(final Graphics2D g2d, final int w, final int h, final boolean paintWithHover) {
+        final ModernButtonPainter.State state;
+        if (!isEnabled()) {
+            state = ModernButtonPainter.State.DISABLED;
+        } else if (pressed && hovered) {
+            state = ModernButtonPainter.State.PRESSED;
+        } else if (selected) {
+            state = ModernButtonPainter.State.SELECTED;
+        } else if (paintWithHover) {
+            state = ModernButtonPainter.State.HOVER;
+        } else {
+            state = ModernButtonPainter.State.NORMAL;
+        }
+        if (opaque || state != ModernButtonPainter.State.NORMAL) {
+            ModernButtonPainter.paint(g2d, w, h, state, false, hasFocus() && isEnabled());
+        }
+        paintContent(g2d, w, h, false);
     }
 
     protected void paintContent(final Graphics2D g, final int w, final int h, final boolean paintPressedState) {

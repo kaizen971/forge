@@ -227,6 +227,10 @@ public class FButton extends SkinnedButton implements ILocalRepaint, IButton {
 
     @Override
     protected void paintComponent(final Graphics g) {
+        if (FSkin.isFlatLaf()) {
+            paintModern((Graphics2D) g);
+            return;
+        }
         if (!allImagesPresent) {
             return;
         }
@@ -249,6 +253,28 @@ public class FButton extends SkinnedButton implements ILocalRepaint, IButton {
         FSkin.drawImage(g2d, imgR, this.w - this.h, 0, this.h, this.h);
 
         super.paintComponent(g);
+    }
+
+    private void paintModern(final Graphics2D g2d) {
+        final ModernButtonPainter.State state;
+        if (!isEnabled()) {
+            state = ModernButtonPainter.State.DISABLED;
+        } else if (toggle) {
+            state = ModernButtonPainter.State.SELECTED;
+        } else if (getModel().isPressed() && getModel().isArmed()) {
+            state = ModernButtonPainter.State.PRESSED;
+        } else if (hovered) {
+            state = ModernButtonPainter.State.HOVER;
+        } else {
+            state = ModernButtonPainter.State.NORMAL;
+        }
+        ModernButtonPainter.paint(g2d, getWidth(), getHeight(), state, false, isFocusOwner());
+
+        g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        if (!isEnabled()) {
+            g2d.setComposite(this.disabledComposite);
+        }
+        super.paintComponent(g2d);
     }
 
     @Override
