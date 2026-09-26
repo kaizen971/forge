@@ -6,6 +6,7 @@ import java.awt.Graphics;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
 import javax.swing.border.EmptyBorder;
@@ -54,21 +55,37 @@ public final class DragTab extends SkinnedLabel implements ILocalRepaint {
         });
     }
 
-    /** Right-click menu to detach this tab's document into its own window (e.g. on a second monitor), or dock it back. */
+    /**
+     * Right-click menu to detach this tab's document into its own window (e.g. on a second monitor),
+     * group it with other detached documents, or dock it back.
+     */
     private void showContextMenu(final MouseEvent e) {
         final IVDoc<? extends ICDoc> doc = getDoc();
         if (doc == null) { return; }
 
         final JPopupMenu menu = new JPopupMenu();
-        final JMenuItem item;
-        if (SFloatingDocs.isFloating(doc)) {
-            item = new JMenuItem(SFloatingDocs.getReattachCaption());
-            item.addActionListener(evt -> SFloatingDocs.reattach(doc));
-        } else {
-            item = new JMenuItem(SFloatingDocs.getDetachCaption());
-            item.addActionListener(evt -> SFloatingDocs.detach(doc));
+        final SFloatingDocs.FloatingDocWindow ownWindow = SFloatingDocs.getWindowOf(doc);
+        if (ownWindow != null) {
+            final JMenuItem reattach = new JMenuItem(SFloatingDocs.getReattachCaption());
+            reattach.addActionListener(evt -> SFloatingDocs.reattach(doc));
+            menu.add(reattach);
         }
-        menu.add(item);
+        if (ownWindow == null || ownWindow.getDocs().size() > 1) {
+            final JMenuItem detach = new JMenuItem(SFloatingDocs.getDetachCaption());
+            detach.addActionListener(evt -> SFloatingDocs.detach(doc));
+            menu.add(detach);
+        }
+        for (final SFloatingDocs.FloatingDocWindow window : SFloatingDocs.getWindows()) {
+            if (window == ownWindow && window.getDocs().size() == 1) { continue; }
+            final JMenu moveTo = new JMenu(SFloatingDocs.getMoveToCaption(window));
+            for (final SFloatingDocs.Placement placement : SFloatingDocs.Placement.values()) {
+                if (placement == SFloatingDocs.Placement.TAB && window.getFirstCell() == doc.getParentCell()) { continue; }
+                final JMenuItem item = new JMenuItem(SFloatingDocs.getPlacementCaption(placement));
+                item.addActionListener(evt -> SFloatingDocs.moveToWindow(doc, window, placement));
+                moveTo.add(item);
+            }
+            menu.add(moveTo);
+        }
         menu.show(this, e.getX(), e.getY());
     }
 

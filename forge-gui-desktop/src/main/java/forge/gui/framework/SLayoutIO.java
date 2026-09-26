@@ -13,6 +13,7 @@ import forge.util.ThreadUtil;
 import forge.view.FFrame;
 import forge.view.FView;
 
+import javax.swing.JSplitPane;
 import javax.swing.border.EmptyBorder;
 import javax.xml.stream.*;
 import javax.xml.stream.events.Attribute;
@@ -24,11 +25,10 @@ import com.google.common.collect.MultimapBuilder;
 
 import java.awt.*;
 import java.io.*;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -48,7 +48,13 @@ public final class SLayoutIO {
         public final static String max = "max";
         public final static String fs = "fs";
         public final static String floating = "floating";
+        public final static String pane = "pane";
+        public final static String orient = "orient";
+        public final static String div = "div";
     }
+
+    private static final String ORIENT_BELOW = "below";
+    private static final String ORIENT_RIGHT = "right";
 
     private static final XMLEventFactory EF = XMLEventFactory.newInstance();
     private static final XMLEvent NEWLINE = EF.createDTD("\n");
@@ -314,9 +320,9 @@ public final class SLayoutIO {
                 writer.add(NEWLINE);
             }
 
-            // Detached documents: bounds are absolute screen pixels so windows can live on another monitor
-            for (final Map.Entry<EDocID, Rectangle> floating : SFloatingDocs.getFloatingBounds().entrySet()) {
-                final Rectangle bounds = floating.getValue();
+            // Detached windows: bounds are absolute screen pixels so windows can live on another monitor
+            for (final SFloatingDocs.WindowState floating : SFloatingDocs.getWindowStates()) {
+                final Rectangle bounds = floating.bounds;
                 writer.add(TAB);
                 writer.add(EF.createStartElement("", "", Property.floating));
                 writer.add(EF.createAttribute(Property.x, String.valueOf(bounds.x)));
@@ -324,7 +330,26 @@ public final class SLayoutIO {
                 writer.add(EF.createAttribute(Property.w, String.valueOf(bounds.width)));
                 writer.add(EF.createAttribute(Property.h, String.valueOf(bounds.height)));
                 writer.add(NEWLINE);
-                createNode(writer, Property.doc, floating.getKey().toString());
+                for (final SFloatingDocs.PaneState pane : floating.panes) {
+                    writer.add(TAB);
+                    writer.add(TAB);
+                    writer.add(EF.createStartElement("", "", Property.pane));
+                    writer.add(EF.createAttribute(Property.orient,
+                            pane.orientation == JSplitPane.HORIZONTAL_SPLIT ? ORIENT_RIGHT : ORIENT_BELOW));
+                    writer.add(EF.createAttribute(Property.div, String.valueOf(Math.rint(pane.divider * 1000) / 1000)));
+                    if (pane.selected != null) {
+                        writer.add(EF.createAttribute(Property.sel, pane.selected.toString()));
+                    }
+                    writer.add(NEWLINE);
+                    for (final EDocID doc : pane.docs) {
+                        writer.add(TAB);
+                        createNode(writer, Property.doc, doc.toString());
+                    }
+                    writer.add(TAB);
+                    writer.add(TAB);
+                    writer.add(EF.createEndElement("", "", Property.pane));
+                    writer.add(NEWLINE);
+                }
                 writer.add(TAB);
                 writer.add(EF.createEndElement("", "", Property.floating));
                 writer.add(NEWLINE);
@@ -409,7 +434,7 @@ public final class SLayoutIO {
         if (file != null) {
             // Read a model for new layout
             ListMultimap<LayoutInfo, EDocID> model = null;
-            final Map<EDocID, Rectangle> floatingModel = new LinkedHashMap<>();
+            final List<SFloatingDocs.WindowState> floatingModel = new ArrayList<>();
             boolean usedCustomPrefsFile = false;
             FileInputStream fis = null;
 
@@ -505,16 +530,8 @@ public final class SLayoutIO {
                 }
             }
 
-            for (final Map.Entry<EDocID, Rectangle> floating : floatingModel.entrySet()) {
-                try {
-                    final IVDoc<? extends ICDoc> doc = floating.getKey().getDoc();
-                    if (doc != null && !model.containsValue(floating.getKey())) {
-                        SFloatingDocs.open(doc, floating.getValue());
-                    }
-                }
-                catch (IllegalArgumentException e) {
-                    System.err.println("Failed to get floating doc for " + floating.getKey());
-                }
+            for (final SFloatingDocs.WindowState floating : floatingModel) {
+                SFloatingDocs.open(floating, model.values());
             }
         }
 
@@ -525,10 +542,10 @@ public final class SLayoutIO {
     private record LayoutInfo(RectangleOfDouble bounds, EDocID selectedId) { }
 
     /**
-     * @param floatingOut receives the detached documents and their window bounds (see {@link SFloatingDocs})
+     * @param floatingOut receives the detached windows, their panes and documents (see {@link SFloatingDocs})
      */
     private static ListMultimap<LayoutInfo, EDocID> readLayout(final XMLEventReader reader,
-            final Map<EDocID, Rectangle> floatingOut) throws XMLStreamException
+            final List<SFloatingDocs.WindowState> floatingOut) throws XMLStreamException
     {
         XMLEvent event;
         StartElement element;
@@ -540,7 +557,8 @@ public final class SLayoutIO {
         ListMultimap<LayoutInfo, EDocID> model = MultimapBuilder.hashKeys().arrayListValues().build();
 
         LayoutInfo currentKey = null;
-        Rectangle currentFloating = null;
+        SFloatingDocs.WindowState currentFloating = null;
+        SFloatingDocs.PaneState currentPane = null;
         while (null != reader && reader.hasNext()) {
             event = reader.nextEvent();
 
@@ -548,26 +566,48 @@ public final class SLayoutIO {
                 element = event.asStartElement();
 
                 if (element.getName().getLocalPart().equals(Property.floating)) {
-                    currentFloating = new Rectangle();
+                    currentFloating = new SFloatingDocs.WindowState();
+                    currentPane = null;
+                    floatingOut.add(currentFloating);
                     attributes = element.getAttributes();
                     while (attributes.hasNext()) {
                         attribute = (Attribute) attributes.next();
                         String atrName = attribute.getName().toString();
                         int value = Integer.parseInt(attribute.getValue());
 
-                        if (atrName.equals(Property.x))      currentFloating.x = value;
-                        else if (atrName.equals(Property.y)) currentFloating.y = value;
-                        else if (atrName.equals(Property.w)) currentFloating.width = value;
-                        else if (atrName.equals(Property.h)) currentFloating.height = value;
+                        if (atrName.equals(Property.x))      currentFloating.bounds.x = value;
+                        else if (atrName.equals(Property.y)) currentFloating.bounds.y = value;
+                        else if (atrName.equals(Property.w)) currentFloating.bounds.width = value;
+                        else if (atrName.equals(Property.h)) currentFloating.bounds.height = value;
+                    }
+                }
+                else if (element.getName().getLocalPart().equals(Property.pane) && currentFloating != null) {
+                    currentPane = new SFloatingDocs.PaneState();
+                    currentFloating.panes.add(currentPane);
+                    attributes = element.getAttributes();
+                    while (attributes.hasNext()) {
+                        attribute = (Attribute) attributes.next();
+                        String atrName = attribute.getName().toString();
+
+                        if (atrName.equals(Property.orient)) {
+                            currentPane.orientation = ORIENT_RIGHT.equals(attribute.getValue())
+                                    ? JSplitPane.HORIZONTAL_SPLIT : JSplitPane.VERTICAL_SPLIT;
+                        }
+                        else if (atrName.equals(Property.div)) currentPane.divider = Double.parseDouble(attribute.getValue());
+                        else if (atrName.equals(Property.sel)) currentPane.selected = EDocID.valueOf(attribute.getValue());
                     }
                 }
                 else if (element.getName().getLocalPart().equals(Property.doc) && currentFloating != null) {
                     event = reader.nextEvent();
-                    floatingOut.put(EDocID.valueOf(event.asCharacters().getData()), currentFloating);
-                    currentFloating = null;
+                    if (currentPane == null) { //single document window, as written by earlier versions
+                        currentPane = new SFloatingDocs.PaneState();
+                        currentFloating.panes.add(currentPane);
+                    }
+                    currentPane.docs.add(EDocID.valueOf(event.asCharacters().getData()));
                 }
                 else if (element.getName().getLocalPart().equals("cell")) {
                     currentFloating = null;
+                    currentPane = null;
                     attributes = element.getAttributes();
                     while (attributes.hasNext()) {
                         attribute = (Attribute) attributes.next();

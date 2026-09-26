@@ -86,7 +86,16 @@ public final class SRearrangingUtil {
     private static void startRearrange(final MouseEvent e) {
         cellSrc = (DragCell) ((Container) e.getSource()).getParent().getParent();
         docsToMove.clear();
-        if (cellSrc.isFloating()) { //floating windows are not part of the drag layout
+        if (cellSrc.isFloating()) { //floating windows are not part of the drag layout: only select the clicked tab
+            if (e.getSource() instanceof DragTab) {
+                for (final IVDoc<? extends ICDoc> vDoc : cellSrc.getDocs()) {
+                    if (vDoc.getTabLabel() == e.getSource()) {
+                        cellSrc.setSelected(vDoc);
+                        cellSrc.refresh();
+                        SLayoutIO.saveLayout(null);
+                    }
+                }
+            }
             cellSrc = null;
             return;
         }
