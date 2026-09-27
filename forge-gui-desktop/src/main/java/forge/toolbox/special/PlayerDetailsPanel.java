@@ -14,7 +14,9 @@ import forge.game.zone.ZoneType;
 import forge.gui.FThreads;
 import org.apache.commons.lang3.StringUtils;
 
+import forge.card.ColorSet;
 import forge.card.mana.ManaAtom;
+import forge.game.card.CardView;
 import forge.game.player.PlayerView;
 import forge.localinstance.skin.FSkinProp;
 import forge.toolbox.FLabel;
@@ -36,6 +38,11 @@ public class PlayerDetailsPanel extends JPanel {
     private final Map<ZoneType, DetailLabelZone> zoneLabels = new EnumMap<>(ZoneType.class);
     private final List<DetailLabelMana> manaLabels = new ArrayList<>();
     private final DetailLabelExtra extraLabel;
+    /** Mana the player can still produce: untapped sources able to tap for mana, with their colors. */
+    private final FLabel lblAvailableMana = new FLabel.Builder().fontAlign(SwingConstants.LEFT).fontStyle(Font.BOLD)
+            .tooltip(Localizer.getInstance().getMessageorUseDefault("lblAvailableManaTooltip",
+                    "Estimate of the mana you can still produce: untapped lands and mana sources (summoning sick creatures excluded)."))
+            .build();
 
     public PlayerDetailsPanel(final PlayerView player, final EnumSet<ZoneType> supportedZones) {
         this.player = player;
@@ -81,6 +88,8 @@ public class PlayerDetailsPanel extends JPanel {
         final SkinnedPanel row5 = new SkinnedPanel(new MigLayout("insets 0, gap 0"));
         final SkinnedPanel row6 = new SkinnedPanel(new MigLayout("insets 0, gap 0"));
         final SkinnedPanel row7 = new SkinnedPanel(new MigLayout("insets 0, gap 0"));
+        final SkinnedPanel row8 = new SkinnedPanel(new MigLayout("insets 0, gap 0"));
+        row8.setOpaque(false);
 
         row1.setBackground(FSkin.getColor(FSkin.Colors.CLR_ZEBRA));
         row2.setOpaque(false);
@@ -114,7 +123,9 @@ public class PlayerDetailsPanel extends JPanel {
         row7.add(manaLabels.get(4), constraintsCell);
         row7.add(manaLabels.get(5), constraintsCell);
 
-        final String constraintsRow = "w 100%!, h 14%!";
+        row8.add(lblAvailableMana, "w 100%-4px!, h 100%!, gapleft 2px, gapright 2px");
+
+        final String constraintsRow = "w 100%!, h 12%!";
         add(row1, constraintsRow + ", gap 0 0 2% 0");
         add(row2, constraintsRow);
         add(row3, constraintsRow);
@@ -122,6 +133,42 @@ public class PlayerDetailsPanel extends JPanel {
         add(row5, constraintsRow);
         add(row6, constraintsRow);
         add(row7, constraintsRow);
+        add(row8, constraintsRow);
+    }
+
+    /**
+     * Updates the available mana line: number of untapped cards on the battlefield that can tap for mana
+     * (summoning sick creatures excluded) and the colors they can produce. An estimate: sources producing
+     * several mana or needing more than tapping are counted once.
+     */
+    public void updateAvailableMana() {
+        int sources = 0;
+        boolean anyColor = false;
+        final Set<String> colors = new LinkedHashSet<>();
+        final Iterable<CardView> battlefield = player.getCards(ZoneType.Battlefield);
+        if (battlefield != null) {
+            for (final CardView card : battlefield) {
+                final CardView.CardStateView state = card.getCurrentState();
+                if (state == null || card.isTapped() || (state.isCreature() && card.isSick())) {
+                    continue;
+                }
+                final ColorSet produced = state.origProduceMana();
+                if (produced == null && !state.origProduceAnyMana()) {
+                    continue;
+                }
+                sources++;
+                anyColor |= state.origProduceAnyMana();
+                if (produced != null) {
+                    for (final String color : new String[] {"W", "U", "B", "R", "G"}) {
+                        if (produced.hasAnyColor(ManaAtom.fromName(color))) { colors.add(color); }
+                    }
+                    if (produced.isColorless()) { colors.add("C"); }
+                }
+            }
+        }
+        final String caption = Localizer.getInstance().getMessageorUseDefault("lblAvailableMana", "Mana available");
+        final String colorText = anyColor ? "WUBRG" : String.join("", colors);
+        lblAvailableMana.setText(caption + " : " + sources + (colorText.isEmpty() ? "" : "  (" + colorText + ")"));
     }
 
     public Component getLblLibrary() {
@@ -144,6 +191,7 @@ public class PlayerDetailsPanel extends JPanel {
         for (final DetailLabel label : manaLabels) {
             label.onContentUpdate();
         }
+        updateAvailableMana();
     }
 
     public void setupMouseActions(Function<ZoneType, Runnable> zoneActionFactory,

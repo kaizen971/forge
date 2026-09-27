@@ -341,6 +341,18 @@ public class CardPanel extends SkinnedPanel implements CardContainer, IDisposabl
             g2d.fillRoundRect(cardXOffset - n3, (cardYOffset - n3) + offset, cardWidth + (n3 * 2), cardHeight + (n3 * 2), cornerSize + n3, cornerSize + n3);
         }
 
+        // Glow around cards that can be played or activated right now (actionable highlights), easier to spot
+        // than the 1px inner border drawn below
+        if (getCard() != null && isPreferenceEnabled(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS)
+                && matchUI.isWeaklySelectable(getCard()) && !matchUI.isSelectable(getCard())) {
+            final Color glow = parseActionableHighlightColor();
+            for (int layer = 2; layer >= 1; layer--) {
+                g2d.setColor(new Color(glow.getRed(), glow.getGreen(), glow.getBlue(), layer == 2 ? 90 : 200));
+                final int n4 = Math.max(layer, Math.round(layer * 1.5f * cardWidth * CardPanel.SELECTED_BORDER_SIZE));
+                g2d.fillRoundRect(cardXOffset - n4, (cardYOffset - n4) + offset, cardWidth + (n4 * 2), cardHeight + (n4 * 2), cornerSize + n4, cornerSize + n4);
+            }
+        }
+
         // Magenta outline for when card is chosen
         if (matchUI.isHighlighted(getCard())) {
             g2d.setColor(Color.magenta);

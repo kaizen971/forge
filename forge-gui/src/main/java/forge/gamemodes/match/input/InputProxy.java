@@ -22,6 +22,7 @@ import forge.game.card.CardView;
 import forge.game.player.Player;
 import forge.game.player.PlayerView;
 import forge.game.spellability.SpellAbility;
+import forge.game.zone.ZoneType;
 import forge.gui.FThreads;
 import forge.player.PlayerControllerHuman;
 import forge.util.ITriggerEvent;
@@ -45,6 +46,8 @@ public class InputProxy implements Observer {
     /** The input. */
     private AtomicReference<Input> input = new AtomicReference<>();
     private final PlayerControllerHuman controller;
+    /** Card clicked to replace the spell being cast, played once priority is back. */
+    private volatile CardView pendingCardClick;
 
 //    private static final boolean DEBUG_INPUT = true; // false;
 
@@ -71,6 +74,15 @@ public class InputProxy implements Observer {
             current.showMessageInitial();
         };
         FThreads.invokeInEdtLater(showMessage);
+
+        // A card clicked while cancelling another spell (see selectCard): play it now that priority is back
+        final CardView pending = pendingCardClick;
+        if (pending != null && nextInput instanceof InputPassPriority) {
+            pendingCardClick = null;
+            FThreads.invokeInEdtLater(() -> selectCard(pending, null, null));
+        } else if (pending != null && !(nextInput instanceof InputLockUI)) {
+            pendingCardClick = null; //the game asked something else first: drop the pending click
+        }
     }
     /**
      * <p>
@@ -110,6 +122,20 @@ public class InputProxy implements Observer {
         return controller.getCard(cardView);
     }
 
+    /**
+     * @return true if the card is a playable card of the local player's hand that has nothing to do with the
+     * current payment or targeting of a spell being cast, so that clicking it may switch to playing it.
+     */
+    private boolean canSwitchToCard(final Input inp, final Card card) {
+        final Player player = controller.getPlayer();
+        if (!player.getCardsIn(ZoneType.Hand).contains(card)) {
+            return false;
+        }
+        final boolean cancellable = (inp instanceof InputPayMana payMana && payMana.canBeCancelledToPlay(card))
+                || (inp instanceof InputSelectTargets targets && targets.canBeCancelledToPlay(card));
+        return cancellable && !card.getAllPossibleAbilities(player, true).isEmpty();
+    }
+
     public final String getActivateAction(final CardView cardView) {
         final Input inp = getInput();
         if (inp != null) {
@@ -125,6 +151,13 @@ public class InputProxy implements Observer {
         final Input inp = getInput();
         if (inp != null) {
             final Card card = getCard(cardView);
+            if (card != null && canSwitchToCard(inp, card)) {
+                // Clicking another card of the hand while paying for or targeting a spell being cast:
+                // cancel that spell, then play the clicked card once priority is back (see update)
+                pendingCardClick = cardView;
+                inp.selectButtonCancel();
+                return true;
+            }
             if (card != null) {
                 List<Card> otherCardsToSelect = null;
                 if (otherCardViewsToSelect != null) {

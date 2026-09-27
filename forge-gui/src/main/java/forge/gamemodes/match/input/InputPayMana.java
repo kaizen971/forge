@@ -64,6 +64,14 @@ public abstract class InputPayMana extends InputSyncronizedBase {
         }
     }
 
+    /**
+     * @return true when a click on this card, unrelated to the payment, may cancel it so the card can be
+     * played instead: only while casting (not paying for an effect during resolution) and when cancelling is allowed.
+     */
+    boolean canBeCancelledToPlay(final Card card) {
+        return !effect && !mandatory && !game.getStack().isResolving() && getAllManaAbilities(card).isEmpty();
+    }
+
     @Override
     protected void onStop() {
         getController().clearActionableCards();

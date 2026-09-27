@@ -155,6 +155,14 @@ public final class InputSelectTargets extends InputSyncronizedBase {
         this.done();
     }
 
+    /**
+     * @return true when a click on this card, which is not a valid target, may cancel the targeting so the card
+     * can be played instead: only while casting and when cancelling is allowed.
+     */
+    boolean canBeCancelledToPlay(final Card card) {
+        return !mandatory && !choices.contains(card) && !getController().getGame().getStack().isResolving();
+    }
+
     @Override
     protected void onOk() {
         bOk = true;

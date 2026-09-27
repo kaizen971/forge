@@ -678,6 +678,7 @@ public final class CMatchUI
                 final VField battlefield = getFieldViewFor(c.getController());
                 if (battlefield != null) {
                     battlefield.getTabletop().updateCard(c, false);
+                    battlefield.getDetailsPanel().updateAvailableMana(); //a source may have been tapped or untapped
                 }
                 break;
             case Hand:
