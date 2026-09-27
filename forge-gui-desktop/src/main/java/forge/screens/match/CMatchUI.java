@@ -85,6 +85,7 @@ import forge.gui.framework.FScreen;
 import forge.gui.framework.ICDoc;
 import forge.gui.framework.IVDoc;
 import forge.gui.framework.SDisplayUtil;
+import forge.gui.framework.SFloatingDocs;
 import forge.gui.framework.SLayoutIO;
 import forge.gui.framework.VEmptyDoc;
 import forge.gui.util.SOptionPane;
@@ -383,6 +384,7 @@ public final class CMatchUI
         final List<VField> fields = new ArrayList<>();
         Singletons.getView().getLpnDocument().add(targetingOverlay.getPanel(), FView.TARGETING_LAYER);
         targetingOverlay.getPanel().setSize(Singletons.getControl().getDisplaySize());
+        SFloatingDocs.setOverlayFactory(targetingOverlay::createFloatingOverlay); // arrows over detached windows too
 
         int i = 0;
         for (final PlayerView p : sortedPlayers) {
@@ -1315,6 +1317,7 @@ public final class CMatchUI
     public void afterGameEnd() {
         super.afterGameEnd();
         Singletons.getView().getLpnDocument().remove(targetingOverlay.getPanel());
+        SFloatingDocs.setOverlayFactory(null);
         FThreads.invokeInEdtNowOrLater(() -> {
             Singletons.getView().getNavigationBar().closeTab(screen);
             LinkHandler.clearWeakReferencesNow();

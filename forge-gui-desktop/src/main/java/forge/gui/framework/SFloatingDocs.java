@@ -14,7 +14,9 @@ import java.awt.event.WindowEvent;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.function.Supplier;
 
+import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.JSplitPane;
 import javax.swing.SwingUtilities;
@@ -40,8 +42,22 @@ public final class SFloatingDocs {
     public enum Placement { TAB, ABOVE, BELOW, LEFT, RIGHT }
 
     private static final List<FloatingDocWindow> windows = new ArrayList<>();
+    /** Creates a transparent overlay (e.g. the match targeting arrows) for each floating window; null for none. */
+    private static Supplier<JComponent> overlayFactory;
 
     private SFloatingDocs() {
+    }
+
+    /**
+     * Sets the factory of the transparent overlay installed as glass pane of every floating window,
+     * e.g. so the match screen can draw its targeting and combat arrows over detached battlefields.
+     * Pass null to remove the overlays.
+     */
+    public static void setOverlayFactory(final Supplier<JComponent> factory) {
+        overlayFactory = factory;
+        for (final FloatingDocWindow window : windows) {
+            window.installOverlay();
+        }
     }
 
     //========== Captions
@@ -443,6 +459,7 @@ public final class SFloatingDocs {
             content.setOpaque(false);
             content.setMinimumSize(new Dimension(0, 0)); //always fit the window instead of overflowing it
             add(content, "grow, push");
+            installOverlay();
 
             if (hasSavedBounds) {
                 setBounds(bounds);
@@ -473,6 +490,18 @@ public final class SFloatingDocs {
         public void setLocationRelativeTo(final Component c) {
             if (hasSavedBounds) { return; } //keep the saved / detached position, e.g. on a second monitor
             super.setLocationRelativeTo(c);
+        }
+
+        /** Installs (or removes) the overlay drawn above the window content, see {@link #setOverlayFactory}. */
+        private void installOverlay() {
+            final JComponent overlay = overlayFactory == null ? null : overlayFactory.get();
+            if (overlay != null) {
+                setGlassPane(overlay);
+                overlay.setVisible(true);
+            } else {
+                getGlassPane().setVisible(false);
+            }
+            repaint();
         }
 
         //========== Full screen: covers the whole monitor the window is on
