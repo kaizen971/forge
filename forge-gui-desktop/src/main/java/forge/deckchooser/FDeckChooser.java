@@ -28,6 +28,8 @@ import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,6 +61,7 @@ public class FDeckChooser extends JPanel implements IDecksComboBoxListener {
     private JPanel pnlDeckUrl;
     private FTextField txtDeckUrl;
     private FLabel btnReloadUrl;
+    private FLabel btnDeleteUrlDeck;
     private String lastLoadedUrlDeckName;
     private UiCommand deckSelectionCommand;
     private boolean updatingDeckPool;
@@ -390,6 +393,54 @@ public class FDeckChooser extends JPanel implements IDecksComboBoxListener {
         btnReloadUrl = new FLabel.ButtonBuilder().text(localizer.getMessage("lblReload")).fontSize(14).build();
         btnReloadUrl.setCommand(this::loadDeckFromUrl);
         pnlDeckUrl.add(btnReloadUrl, "h " + FTextField.HEIGHT + "px!, w pref!");
+        btnDeleteUrlDeck = new FLabel.ButtonBuilder().text(localizer.getMessage("lblDelete")).fontSize(14)
+                .tooltip(localizer.getMessageorUseDefault("lblDeleteUrlDeckTooltip",
+                        "Delete the selected deck imported from a URL (Delete key)")).build();
+        btnDeleteUrlDeck.setCommand(this::deleteSelectedUrlDeck);
+        pnlDeckUrl.add(btnDeleteUrlDeck, "h " + FTextField.HEIGHT + "px!, w pref!, gapleft 6px");
+
+        // Delete key removes the selected URL deck too, so the list can be sorted quickly
+        lstDecks.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "deleteUrlDeck");
+        lstDecks.getActionMap().put("deleteUrlDeck", new AbstractAction() {
+            @Override
+            public void actionPerformed(final ActionEvent e) {
+                if (selectedDeckType == DeckType.PROVIDED_DECK_URL) {
+                    deleteSelectedUrlDeck();
+                }
+            }
+        });
+    }
+
+    /**
+     * Deletes the selected deck imported from a URL (after confirmation), then selects the next one
+     * so decks can be deleted one after another.
+     */
+    private void deleteSelectedUrlDeck() {
+        if (selectedDeckType != DeckType.PROVIDED_DECK_URL) {
+            return;
+        }
+        final DeckProxy selected = lstDecks.getSelectedItem();
+        if (selected == null) {
+            return;
+        }
+        if (!FOptionPane.showConfirmDialog(localizer.getMessage("lblConfirmDelete") + " '" + selected.getName() + "'?",
+                localizer.getMessage("lblDeleteDeck"), localizer.getMessage("lblDelete"),
+                localizer.getMessage("lblCancel"), false)) {
+            return;
+        }
+        final int index = lstDecks.getSelectedIndex();
+        selected.deleteFromStorage();
+        if (selected.getName().equals(lastLoadedUrlDeckName)) {
+            lastLoadedUrlDeckName = null;
+        }
+        refreshDecksList(DeckType.PROVIDED_DECK_URL, true, null);
+        final int count = lstDecks.getItemCount();
+        if (count > 0) {
+            lstDecks.setSelectedIndex(Math.max(0, Math.min(index, count - 1)));
+        } else {
+            txtDeckUrl.setText("");
+        }
     }
 
     private void updateDeckUrlPanelVisibility() {
@@ -451,6 +502,7 @@ public class FDeckChooser extends JPanel implements IDecksComboBoxListener {
     private void setDeckUrlLoading(final boolean loading) {
         txtDeckUrl.setEnabled(!loading);
         btnReloadUrl.setEnabled(!loading);
+        btnDeleteUrlDeck.setEnabled(!loading);
         btnRandom.setEnabled(!loading);
         if (loading) {
             btnReloadUrl.setText(localizer.getMessage("lblLoadingEllipsis"));
